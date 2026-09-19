@@ -6,6 +6,14 @@ It runs on **Mac, Windows, and Linux** in any Chromium browser, in Firefox 142+,
 
 The user installs a thin MV3 shell once. After that, the living code is `GET {desk}/agent.js`, hashed, eval'd into MAIN world on every frame. Same hash: call `agent.arm()`. Desk down: packed `inject.js` still runs. Point the desk at `127.0.0.1`, not `localhost` (Windows IPv6).
 
+## Git identity
+
+This repository is SharpMeow. Commits use only:
+
+    Chaos <326338179+SharpMeow@users.noreply.github.com>
+
+Never `sharpie@users.noreply.github.com`. That address is github.com/Sharpie, not this account. Do not add `Co-authored-by` with it. Squash-merge copies the trailer onto main.
+
 ## Include PageArm in a project when
 
 - Work must happen in the human's already-logged-in tab (cookies, SSO, no API), in whichever browser that is.
