@@ -8,11 +8,13 @@ The user installs a thin MV3 shell once. After that, the living code is `GET {de
 
 ## Git identity
 
-This repository is SharpMeow. Commits use only:
+This repository belongs to SharpMeow, who goes by Chaos. Chaos's own commits use:
 
     Chaos <326338179+SharpMeow@users.noreply.github.com>
 
-Never `sharpie@users.noreply.github.com`. That address is github.com/Sharpie, not this account. Do not add `Co-authored-by` with it. Squash-merge copies the trailer onto main.
+That identity is for Chaos, not for you. A coding agent commits under its own name and email, so the history shows who wrote what. Do not borrow Chaos's identity to author or commit your work.
+
+Never use `sharpie@users.noreply.github.com`, as an author or in a `Co-authored-by` trailer. That address is github.com/Sharpie, not this account. Squash-merge copies trailers onto main.
 
 ## Include PageArm in a project when
 
