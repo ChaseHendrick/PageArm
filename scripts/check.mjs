@@ -139,7 +139,9 @@ for (const target of TARGETS) {
 
   for (const n of ["background.js", "boot.js", "bridge.js", "inject.js"]) parses(text(files, n), target + "/" + n);
   ok(!text(files, "background.js").includes("__PA_ORIGIN__"), "background.js has the desk origin baked in");
-  ok(text(files, "inject.js").startsWith("if (!window.__PA_VER) "), "packed inject.js steps aside for a live agent");
+  ok(text(files, "inject.js").startsWith("if (!window.__PA_VER && "), "packed inject.js steps aside for a live agent");
+  ok(text(files, "inject.js").startsWith("if (!window.__PA_VER && window.origin !== window.__PA_ORIGIN) "),
+    "and never arms on the desk, which a portless host pattern also matches");
   const isPng = (n) => files[n] && files[n][0] === 0x89 && files[n][1] === 0x50 && files[n][2] === 0x4e && files[n][3] === 0x47;
   ok(isPng("icon16.png"), "icon16.png is a PNG");
   ok(isPng("icon32.png"), "icon32.png is a PNG");
@@ -185,6 +187,14 @@ for (const n of readdirSync(join(root, "agents")).filter((f) => f.endsWith(".js"
   parses(wrapAgent(src), "wrapped " + n);
   parses(wrapPacked(src), "packed " + n);
 }
+function runPacked(origin) {
+  const win = { __PA_ORIGIN: "http://127.0.0.1:8787", origin, postMessage() {} };
+  const ctx = createContext({ window: win, console, location: { hostname: "x", pathname: "/" }, setTimeout: () => 0 });
+  new Script(wrapPacked("agent.arm = function () {};"), { filename: "inject.js" }).runInContext(ctx);
+  return !!win.__agent;
+}
+ok(runPacked("https://example.com"), "the packed copy arms on a work site");
+ok(!runPacked("http://127.0.0.1:8787"), "and leaves the desk alone");
 ok(compileError("agent.arm = () => { ok }") === null, "compileError accepts good source");
 ok(typeof compileError("agent.arm = (") === "string", "compileError rejects a syntax error");
 // The number has to be the one the editor is showing, not the wrapper's.
