@@ -1,0 +1,91 @@
+name: release
+# Push a tag like v0.2.0 and this packs the three zips and hangs them on a
+# GitHub Release for that tag. Nothing is published until a v* tag exists.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag to release, like v0.2.0"
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Tag matches package.json
+        run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "::error::The tag '$TAG' does not start with v. Use a tag like v0.2.0."; exit 1 ;;
+          esac
+          want="${TAG#v}"
+          have="$(node -p "require('./package.json').version")"
+          if [ "$want" != "$have" ]; then
+            echo "::error::The tag says $want but package.json says $have. The manifest version comes from package.json, so bump it there, commit, and tag that commit."
+            exit 1
+          fi
+          echo "Tag $TAG matches package.json $have."
+      - run: npm run check
+      - run: npm run pack
+      - name: Every manifest carries the tag's version
+        run: |
+          want="${TAG#v}"
+          for t in chromium firefox safari; do
+            zip="dist/pagearm-$t.zip"
+            test -f "$zip" || { echo "::error::npm run pack did not write $zip."; exit 1; }
+            unzip -p "$zip" manifest.json > "$RUNNER_TEMP/manifest-$t.json"
+            have="$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/manifest-$t.json")"
+            if [ "$have" != "$want" ]; then
+              echo "::error::$zip has manifest version $have, but the tag is $TAG."
+              exit 1
+            fi
+            echo "$zip is version $have."
+          done
+      - name: Write release notes
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          Three zips, one per browser. Each one is good on Mac, Windows, and Linux. Unzip it and keep the folder that contains `manifest.json`. On Windows, if Extract All nested a second folder, go one level in.
+
+          These are the default build: the desk is `http://127.0.0.1:8787`, the host list is `https://*/*` plus `127.0.0.1` and `localhost`, and the packed agent is the hello agent. Want a different host list or your own agent baked in? Run the desk from source and use its **Download** button instead.
+
+          **Chrome, Edge, Brave, Opera, Arc, Chromium** (`pagearm-chromium.zip`)
+          1. `chrome://extensions` (Edge: `edge://extensions`, Brave: `brave://extensions`).
+          2. **Developer mode** on, then **Load unpacked** on the folder with `manifest.json`.
+          3. Open the extension's Details and turn on **Allow User Scripts** if the browser shows it.
+
+          **Firefox 142+** (`pagearm-firefox.zip`)
+          1. `about:debugging#/runtime/this-firefox`, then **Load Temporary Add-on** and pick `manifest.json`.
+          2. Temporary means it is gone when you quit Firefox. Load it again, or sign it at addons.mozilla.org and install the signed file to keep it. Developer Edition and ESR can also be told to accept unsigned add-ons.
+          3. Click **P** once. On Firefox 153 and newer it asks to allow user scripts. Say yes.
+
+          **Safari 18.4+ on a Mac** (`pagearm-safari.zip`)
+          1. `xcrun safari-web-extension-converter --macos-only /path/to/folder`, with Xcode installed.
+          2. Run the app Xcode builds, once.
+          3. Turn on Develop > **Allow unsigned extensions** (Safari forgets it on every full quit), then enable P in Settings > Extensions.
+
+          Pin **P**. Green means armed. The desk, which is what makes hot-swap work, needs Node 18+ and the source: see Quick start in the README. Without it the packed agent still runs.
+
+          No `.app`, no `.exe`, no distro package. Just the three zips.
+          EOF
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: PageArm ${{ env.TAG }}
+          body_path: ${{ runner.temp }}/notes.md
+          fail_on_unmatched_files: true
+          files: |
+            dist/pagearm-chromium.zip
+            dist/pagearm-firefox.zip
+            dist/pagearm-safari.zip

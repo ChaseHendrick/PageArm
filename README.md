@@ -40,7 +40,7 @@ PageArm uses the PolyForm Small Business License 1.0.0. Use it yourself if you a
 
 The shell is JavaScript and two tiny PNGs. No `.app`, no `.exe`, no installer, no "please pick your operating system" page. Apple Silicon and Intel Macs both run it. Windows 10 and 11, 64-bit. Linux x64 and ARM. Same files. Same **P**.
 
-What differs is the manifest, because the browsers disagree about exactly four things: where background code lives, whether `userScripts` is a permission you declare or one you ask for, whether an add-on needs an id, and whether `userScripts` exists at all. So the desk hands you the build for the browser you are actually using, and `npm run pack` writes all three.
+What differs is the manifest, because the browsers disagree about exactly four things: where background code lives, whether `userScripts` is a permission you declare or one you ask for, whether an add-on needs an id, and whether `userScripts` exists at all. So the desk hands you the build for the browser you are actually using, `npm run pack` writes all three, and a tagged release carries all three as downloads.
 
 | Browser | Machines | How it installs |
 |---|---|---|
@@ -54,7 +54,7 @@ Everything that matters is the same in all three: MAIN world, all frames, a hash
 
 **Re-arming inside a single-page app** normally rides `webNavigation.onHistoryStateUpdated`. Safari has no such event, so the isolated bridge watches `popstate` and `hashchange` and tells the background instead. A pure `pushState` with no popstate re-arms on the next real load or a click on **P**. Chromium and Firefox ignore the bridge's message, because they already had the real event and arming twice for one route change is just noise.
 
-**How each build is installed** is its own small ritual. Chromium loads an unpacked folder and keeps it. Firefox loads a temporary add-on that is gone when you quit, unless you sign the zip at addons.mozilla.org or run Developer Edition or ESR set to accept unsigned add-ons. Safari does not load a folder at all: `xcrun safari-web-extension-converter --macos-only` wraps it in an app you build in Xcode, and Safari forgets "Allow unsigned extensions" on every full quit. The repo ships no `.app`, no `.exe`, and no distro package, and it is not going to start.
+**How each build is installed** is its own small ritual. Chromium loads an unpacked folder and keeps it. Firefox loads a temporary add-on that is gone when you quit, unless you sign the zip at addons.mozilla.org or run Developer Edition or ESR set to accept unsigned add-ons. Safari does not load a folder at all: `xcrun safari-web-extension-converter --macos-only` wraps it in an app you build in Xcode, and Safari forgets "Allow unsigned extensions" on every full quit. The repo ships no `.app`, no `.exe`, and no distro package, and it is not going to start. What a tagged release does carry is the three zips themselves, attached to its GitHub Release, so you can skip the clone if all you want is the shell.
 
 Node 18 or newer is only for the desk, the hot-swap URL. The packed extension still runs if the desk is asleep, in all three browsers. Close the laptop. The last good agent is still in the zip.
 
@@ -220,6 +220,23 @@ Swap `agent.arm` for the thing you actually do fifty times a day. That is the on
 
 ---
 
+## Download
+
+Do not want the source? Fair. Each tagged release on the [Releases page](https://github.com/SharpMeow/pagearm/releases) carries three zips: `pagearm-chromium.zip`, `pagearm-firefox.zip`, and `pagearm-safari.zip`. If that page is empty, nothing has been tagged yet, and the Quick start below is the way in.
+
+1. Grab the zip for your browser and unzip it. The unzip notes above apply: keep the folder that contains `manifest.json`.
+2. Install it the way your browser wants:
+   - **Chromium:** `chrome://extensions` or `edge://extensions` → **Developer mode** → **Load unpacked** on the folder with `manifest.json`.
+   - **Firefox:** `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on** → pick `manifest.json`. It lasts until you quit Firefox, unless you sign it at addons.mozilla.org or run Developer Edition or ESR set to accept unsigned add-ons.
+   - **Safari:** `xcrun safari-web-extension-converter --macos-only /path/to/folder`, run the app Xcode builds, then turn on Develop → **Allow unsigned extensions** and enable P in Settings → Extensions.
+3. Pin **P**. On Chromium, turn on **Allow User Scripts** in the extension's Details if you see it. On Firefox, click **P** once and say yes when it asks.
+
+A release zip is the default build, and it is honest to say what that means. The desk it looks for is `http://127.0.0.1:8787`. The host list is `https://*/*` plus `127.0.0.1` and `localhost`. The packed agent is `agents/hello.js`, which paints **P** green and says hello in the console. That is all it does on its own.
+
+The desk is not in the zip. Hot-swap, Look, Write, and the drawer all live on the desk, and the desk is Node 18+ and this repo. When you want it, follow the Quick start: `npm start` serves it at `127.0.0.1:8787`, which is exactly where the released shell is already looking. Want a narrower host list or your own agent baked into the packed copy? Download the zip from the desk instead, because the desk packs whatever you typed.
+
+---
+
 ## Quick start
 
 Needs Node 18+ (Mac, Windows, or Linux) and a browser: Chromium, Firefox 142+, or Safari 18.4+ on a Mac. Coffee optional, encouraged.
@@ -372,6 +389,8 @@ AS_TARGET=firefox npm run pack    # just one
 ```
 
 Writes `dist/pagearm-chromium.zip`, `dist/pagearm-firefox.zip`, and `dist/pagearm-safari.zip`. Same bytes the desk download button serves. No surprises.
+
+Releases are the same command on a clean machine. Bump `version` in `package.json`, commit, and push a tag like `v0.2.0` that matches it. `.github/workflows/release.yml` runs `npm run check`, runs `npm run pack`, and attaches the three zips to a GitHub Release for that tag. A tag that disagrees with `package.json`, or with any packed manifest, fails before anything is published. Nothing is published without a `v*` tag.
 
 `npm run check`, or `npm test`, packs all three in memory, reads each zip back, and validates every manifest and script, including the four keys the browsers disagree about. Mozilla's own `web-ext lint` passes on the Firefox build with one warning, `DANGEROUS_EVAL`, which is the CSP fallback doing exactly what the README says it does. `npm run sim` is a Playwright drive of Look against the sample page. Check does not need Playwright.
 

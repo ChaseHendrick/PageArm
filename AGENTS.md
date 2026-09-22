@@ -60,6 +60,7 @@ The README stills are rendered from `docs/src/*.html` at 1100 CSS pixels wide wi
 - Every request goes through one guard in `scripts/serve.mjs` that answers 500 and keeps serving. A desk you leave running for days does not get to die over one request, and a bare `//`, which any page in the browser can ask for, used to kill it inside `new URL()`. Reads of drawer files are the same: a script that cannot be read is left out of the stack with a warning, never thrown. Do not add a route that reads a file outside `readScript`.
 - `npm run check`, also `npm test`, packs all three targets in memory, reads each zip back, and validates every manifest and script. Add a line there when you add a promise.
 - The manifest version is `package.json`'s version, read in `scripts/pack.mjs`. Do not type a version number anywhere else.
+- A release is a `v*` tag that matches `package.json`'s version. `.github/workflows/release.yml` runs check, runs pack, and attaches the three zips to the GitHub Release for that tag, and fails if the tag and a packed manifest disagree. The zips are the only release assets. Do not push a tag unless Chaos asked for a release.
 - License is PolyForm Small Business 1.0.0. Do not relicense as MIT. Do not add analytics. Do not claim the page cannot see you.
 - American English. No em dashes. Warm comments.
 - One zip per browser, each good on Mac, Windows, and Linux. Do not add a .app, an .exe, or a distro package. Safari's build is converted with `xcrun safari-web-extension-converter` on the user's own Mac, so no Xcode project lives here.
