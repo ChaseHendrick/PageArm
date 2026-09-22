@@ -645,6 +645,13 @@ try {
     "a late type still updates the last field after Stop");
   await desk("/api/look", { method: "DELETE" });
 
+  // A <script src> needs no CORS. Another site must not be able to run the
+  // agent inside itself and read back what it types.
+  const tagged = await desk("/agent.js", { headers: { "Sec-Fetch-Dest": "script", "Sec-Fetch-Site": "cross-site" } });
+  ok(tagged.status === 403, "a cross-site script tag cannot load the agent");
+  const shellFetch = await desk("/agent.js", { headers: { "Sec-Fetch-Dest": "empty", "Sec-Fetch-Site": "none" } });
+  ok(shellFetch.status === 200 && /agent\.arm = armAll/.test(await shellFetch.text()), "the shell's own fetch still gets it");
+
   const icon = await desk("/favicon.png");
   ok(icon.status === 200 && icon.headers.get("content-type") === "image/png",
     "the desk has a favicon instead of 404ing at itself");

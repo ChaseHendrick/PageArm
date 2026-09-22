@@ -464,6 +464,15 @@ async function handle(req, res) {
   }
 
   if (url.pathname === "/agent.js") {
+    // A <script> tag needs no CORS, so any page you visit could otherwise load
+    // the agent into itself and read back whatever it types. The shell fetches
+    // this with fetch(), never as a script, so it is not what this refuses.
+    const dest = req.headers["sec-fetch-dest"];
+    const site = req.headers["sec-fetch-site"];
+    if (dest === "script" && (site === "cross-site" || site === "same-site")) {
+      send(res, 403, "the agent is for the shell, not for other pages");
+      return;
+    }
     send(res, 200, wrapAgent(liveSources()), "text/javascript; charset=utf-8");
     return;
   }

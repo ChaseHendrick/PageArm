@@ -314,7 +314,7 @@ DELETE /api/drawer/:name        throw it out
 POST   /api/stack               { names: [...] }, the agent in order
 ```
 
-Same guards as everything else on the desk: loopback `Host` only, same-site writes only, and source that does not parse is a 400 with the line that broke, never a silent fallback to the packed copy.
+Same guards as everything else on the desk: loopback `Host` only, same-site writes only, `/agent.js` refused to another site's `<script>` tag, and source that does not parse is a 400 with the line that broke, never a silent fallback to the packed copy.
 
 ---
 
