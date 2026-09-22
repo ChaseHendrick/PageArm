@@ -563,11 +563,17 @@ if (api.webNavigation.onHistoryStateUpdated) {
   });
 }
 
-api.action.onClicked.addListener(function (tab) {
-  if (!tab.id) return;
+// A click grants activeTab, and the desk origin is a host permission, so the
+// click itself would let the agent into any tab. Only arm where the host list
+// says so, the same test every navigation already passes.
+function clickedP(tab) {
+  if (!tab || !tab.id) return;
   askForUserScripts().catch(function () {});
+  if (!onHost(String(tab.url || ""))) return;
   arm(tab.id, undefined, true).catch(function () {});
-});
+}
+
+api.action.onClicked.addListener(clickedP);
 
 api.runtime.onInstalled.addListener(function () {
   paintIcon("idle", false);

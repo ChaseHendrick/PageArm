@@ -57,7 +57,7 @@ const BROWSERS = {
   firefox: {
     label: "Firefox",
     steps: [
-      "Firefox 128 or newer on Mac, Windows, or Linux.",
+      "Firefox 142 or newer on Mac, Windows, or Linux.",
       "Download the zip. Unzip it. Keep the folder that holds <code>manifest.json</code>.",
       "<code>about:debugging#/runtime/this-firefox</code> → <strong>Load Temporary Add-on</strong> → pick <code>manifest.json</code>.",
       "Click <strong>P</strong> once. Firefox 153 and newer ask to allow user scripts. Say yes and hot-swap works through a strict CSP.",

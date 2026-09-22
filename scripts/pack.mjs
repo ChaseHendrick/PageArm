@@ -153,7 +153,7 @@ agent lives on the desk at ${o}, not in these files.
 
 1. Keep the folder that contains THIS README and manifest.json.
    Windows Extract All sometimes nests an extra folder. Go in one level.
-2. Firefox 128 or newer. about:debugging#/runtime/this-firefox
+2. Firefox 142 or newer. about:debugging#/runtime/this-firefox
 3. "Load Temporary Add-on", then pick manifest.json in THIS folder.
    Temporary means it is gone when you quit Firefox. Load it again,
    or sign it at addons.mozilla.org and install the signed file to

@@ -311,6 +311,9 @@ export function wrapAgent(source) {
 
 // The packed copy steps aside when a live version is already in the frame, so a
 // late content script never overwrites the agent the worker just hot-swapped in.
+// It also stays off the desk. A host pattern with no port, like the default
+// http://127.0.0.1/*, matches every port, desk included, and boot.js has
+// already said where the desk lives.
 export function wrapPacked(source) {
-  return "if (!window.__PA_VER) " + wrapAgent(source);
+  return "if (!window.__PA_VER && window.origin !== window.__PA_ORIGIN) " + wrapAgent(source);
 }

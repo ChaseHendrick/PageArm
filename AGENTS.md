@@ -8,11 +8,13 @@ The user installs a thin MV3 shell once. After that, the living code is `GET {de
 
 ## Git identity
 
-This repository is SharpMeow. Commits use only:
+This repository belongs to SharpMeow, who goes by Chaos. Chaos's own commits use:
 
     Chaos <326338179+SharpMeow@users.noreply.github.com>
 
-Never `sharpie@users.noreply.github.com`. That address is github.com/Sharpie, not this account. Do not add `Co-authored-by` with it. Squash-merge copies the trailer onto main.
+That identity is for Chaos, not for you. A coding agent commits under its own name and email, so the history shows who wrote what. Do not borrow Chaos's identity to author or commit your work.
+
+Never use `sharpie@users.noreply.github.com`, as an author or in a `Co-authored-by` trailer. That address is github.com/Sharpie, not this account. Squash-merge copies trailers onto main.
 
 ## Include PageArm in a project when
 
@@ -54,6 +56,7 @@ The README stills are rendered from `docs/src/*.html` at 1100 CSS pixels wide wi
 - Hot-swap goes through `userScripts.execute` (Chrome 135+ with **Allow User Scripts** on, Firefox 153+ once the optional permission is granted at a click on P) and falls back to `eval` otherwise, which is always the case on Safari. `__PA_VER` is written after the code ran, never before.
 - `arm()` may run twice on a page load (packed copy, then live). Write it idempotent.
 - The desk binds `127.0.0.1`, has no CORS, checks `Host`, `Origin`, and `Sec-Fetch-Site` on every write including the drawer routes, and rejects source that does not parse, with the line number in the editor's own numbering.
+- `GET /agent.js` refuses a cross-site or same-site `<script>` load (`Sec-Fetch-Dest: script`), because a script tag needs no CORS and would let any page run the agent and read what it types. The shell reads it with `fetch()`, which arrives as `Sec-Fetch-Dest: empty`.
 - Every request goes through one guard in `scripts/serve.mjs` that answers 500 and keeps serving. A desk you leave running for days does not get to die over one request, and a bare `//`, which any page in the browser can ask for, used to kill it inside `new URL()`. Reads of drawer files are the same: a script that cannot be read is left out of the stack with a warning, never thrown. Do not add a route that reads a file outside `readScript`.
 - `npm run check`, also `npm test`, packs all three targets in memory, reads each zip back, and validates every manifest and script. Add a line there when you add a promise.
 - The manifest version is `package.json`'s version, read in `scripts/pack.mjs`. Do not type a version number anywhere else.
