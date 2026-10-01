@@ -441,21 +441,22 @@ function userScripts() {
   }
 }
 
-// Firefox keeps userScripts behind an optional permission, so a click on P is
-// the only moment it will let us ask. We ask once, and we take no for an answer.
-// Chromium lists userScripts as a required permission and uses a toggle on the
-// Details page instead, so this never fires there. Safari has no such API.
+// Firefox only shows the optional-permission prompt if request() is called in
+// the same turn as the click on P. An await before it drops the gesture and
+// the prompt never appears, so the first yes never happens. A permission that
+// is already granted resolves true and does not prompt again.
 var askedForUserScripts = false;
-async function askForUserScripts() {
-  if (askedForUserScripts || userScripts()) return;
+function askForUserScripts() {
+  if (askedForUserScripts || userScripts()) return Promise.resolve();
   askedForUserScripts = true;
   try {
     var optional = (api.runtime.getManifest().optional_permissions || []);
-    if (optional.indexOf("userScripts") < 0) return;
-    if (!api.permissions || typeof api.permissions.request !== "function") return;
-    if (await api.permissions.contains({ permissions: ["userScripts"] })) return;
-    await api.permissions.request({ permissions: ["userScripts"] });
-  } catch (e) {}
+    if (optional.indexOf("userScripts") < 0) return Promise.resolve();
+    if (!api.permissions || typeof api.permissions.request !== "function") return Promise.resolve();
+    return Promise.resolve(api.permissions.request({ permissions: ["userScripts"] })).catch(function () {});
+  } catch (e) {
+    return Promise.resolve();
+  }
 }
 
 // Firefox validates option bags strictly and rejects a property it does not
@@ -568,9 +569,13 @@ if (api.webNavigation.onHistoryStateUpdated) {
 // says so, the same test every navigation already passes.
 function clickedP(tab) {
   if (!tab || !tab.id) return;
-  askForUserScripts().catch(function () {});
+  var asking = askForUserScripts();
   if (!onHost(String(tab.url || ""))) return;
-  arm(tab.id, undefined, true).catch(function () {});
+  // Arm after the answer, so the click that grants userScripts is the click
+  // that can use it. Chromium and Safari resolve immediately.
+  Promise.resolve(asking).then(function () {
+    return arm(tab.id, undefined, true);
+  }).catch(function () {});
 }
 
 api.action.onClicked.addListener(clickedP);

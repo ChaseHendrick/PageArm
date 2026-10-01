@@ -161,7 +161,11 @@ for (const [label, src] of [["background.js", shell], ["bridge.js", bridgeSrc]])
 }
 ok(/webNavigation\.onHistoryStateUpdated/.test(shell) && /if \(api\.webNavigation\.onHistoryStateUpdated\)/.test(shell),
   "background.js guards the navigation event Safari does not have");
-ok(/type === "nav"/.test(shell) && /type: "nav"/.test(bridgeSrc), "the bridge covers that gap with a nav message");
+ok(/function askForUserScripts/.test(shell), "a click on P can ask Firefox for userScripts");
+const askFn = shell.slice(shell.indexOf("function askForUserScripts"), shell.indexOf("async function runUserScript"));
+ok(askFn.indexOf("permissions.request") > 0, "that ask calls permissions.request");
+ok(!/await[\s\S]*permissions\.request/.test(askFn), "the request stays in the click turn, with no await in front of it");
+ok(/Promise\.resolve\(asking\)/.test(shell), "the same click arms after the grant, so the first yes is not wasted");
 ok(/type === "oops"/.test(shell) && /type: "oops"/.test(bridgeSrc), "a throw in the page travels to the background");
 ok(/quiet\(fetch\(ORIGIN \+ "\/api\/oops"/.test(shell), "and on to the desk, as a promise nobody leaves unhandled");
 ok(/type === "ask"/.test(bridgeSrc) && /ask-result/.test(bridgeSrc), "the bridge carries ask the way it carries capture");
