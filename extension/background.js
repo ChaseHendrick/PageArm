@@ -72,7 +72,10 @@ function onHost(url) {
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
     // The desk is the workshop, not a work site. Leave it alone.
     if (u.origin === ORIGIN) return false;
-    return MATCHES.some(function (re) { return re.test(url); });
+    // Match the way the browser does: path only. A query or a hash must not
+    // hide a page that the host list already allows.
+    var bare = u.origin + u.pathname;
+    return MATCHES.some(function (re) { return re.test(bare); });
   } catch (e) {
     return false;
   }
@@ -360,20 +363,26 @@ async function digest(s) {
 
 // One fetch serves every frame of a navigation. Twenty iframes, one trip to the desk.
 var cache = { src: "", at: 0 };
+var inflight = null;
 async function liveCode() {
   var now = Date.now();
   if (cache.src && now - cache.at < CACHE_MS) return cache.src;
+  if (inflight) return inflight;
   const c = new AbortController();
   const t = setTimeout(function () { c.abort(); }, FETCH_TIMEOUT_MS);
-  try {
-    const r = await fetch(ORIGIN + "/agent.js?v=" + now, { cache: "no-store", signal: c.signal });
-    if (!r.ok) throw new Error("agent");
-    const src = await r.text();
-    cache = { src: src, at: Date.now() };
-    return src;
-  } finally {
-    clearTimeout(t);
-  }
+  inflight = (async function () {
+    try {
+      const r = await fetch(ORIGIN + "/agent.js?v=" + Date.now(), { cache: "no-store", signal: c.signal });
+      if (!r.ok) throw new Error("agent");
+      const src = await r.text();
+      cache = { src: src, at: Date.now() };
+      return src;
+    } finally {
+      clearTimeout(t);
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 function exec(opts) {
