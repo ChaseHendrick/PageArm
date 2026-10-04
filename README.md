@@ -91,6 +91,8 @@ GET http://127.0.0.1:8787/api/glance
 
 `agents/glance.js` is that script. It reports from the top window only, so a frame cannot overwrite it with nothing. `agent.glance()` posts the title, the headings, the field names, and the button labels, and it looks inside an open shadow root. Not the values. Not passwords. If you need to act, you save an `agent.arm` and they click **P** again. If you need a clean browser with no session, use Playwright.
 
+The desk also ranks which shelf script fits that glance. `POST /api/route` runs a small residual network, the same shape as a family router: tanh layers, a leftover hop, and a rule that a worse guess does not replace a better one. It knows five scripts: fill, table, form, required, glance. On its synthetic held-out set it ranks 100 of 100. That number is that set, not a live website, and a rank is not proof. It does not decipher anything, and it does not load the cipher weights from anywhere else. Read the script it names, then save it yourself.
+
 ### Why include it in a project
 
 1. **The installed bit and the brain are not the same blob.** Users install eight files once, in whichever browser they already use. You keep shipping `agent.js`. They do not re-drag a bookmark. They do not click Reload on an extensions page after every save. That is a real developer-experience product, not a cute wrapper.

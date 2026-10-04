@@ -8,6 +8,7 @@ import { packExtension, normalizeTarget, zipName } from "./pack.mjs";
 import { pngGlyph } from "./zip.mjs";
 import { wrapAgent } from "./wrap.mjs";
 import { compileLook } from "./look.mjs";
+import { plan } from "./frame.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.PORT || 8787);
@@ -197,6 +198,7 @@ function loopbackHost(req) {
 const MAX_OOPS = 10;
 let oopsLog = [];
 let glanceShot = null;
+let lastPlan = null;
 
 function cleanGlance(raw) {
   const g = raw && typeof raw === "object" ? raw : {};
@@ -707,6 +709,7 @@ async function handle(req, res) {
       use: "The human is already logged into the tab. Read it or act on it without a second browser and without attaching a debugger.",
       not: "A clean browser for CI. Use Playwright for that.",
       read: "GET /api/glance",
+      route: "POST /api/route",
       act: "POST /api/agent with { source }. The next navigation, or a click on P, runs it.",
       sample: "agents/glance.js",
     }), "application/json; charset=utf-8");
@@ -744,6 +747,35 @@ async function handle(req, res) {
     }
     glanceShot = cleanGlance(told);
     send(res, 200, JSON.stringify({ ok: true }), "application/json; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/api/route") {
+    if (req.method === "GET") {
+      send(res, 200, JSON.stringify({ plan: lastPlan }), "application/json; charset=utf-8");
+      return;
+    }
+    if (req.method !== "POST") {
+      send(res, 405, "not that way");
+      return;
+    }
+    if (!fromShell(req)) {
+      send(res, 403, "only the shell may ask");
+      return;
+    }
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || "{}");
+    } catch (e) {
+      send(res, e && e.message === "too big" ? 413 : 400, e && e.message === "too big" ? "too big" : "bad json");
+      return;
+    }
+    const glance = body.glance && typeof body.glance === "object" ? body.glance : body;
+    const held = body.held && typeof body.held === "object"
+      ? body.held
+      : (lastPlan ? { family: lastPlan.family, confidence: lastPlan.confidence, scores: lastPlan.scores } : null);
+    lastPlan = plan(glance, held);
+    send(res, 200, JSON.stringify({ ok: true, plan: lastPlan }), "application/json; charset=utf-8");
     return;
   }
 

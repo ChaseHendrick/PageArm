@@ -22,7 +22,7 @@ Never use `sharpie@users.noreply.github.com`, as an author or in a `Co-authored-
 - The agent will change more often than the hosts.
 - You want MAIN-world `querySelector` / click / type, all frames, including short-lived blank iframes.
 - An AI or a human will rewrite `agent.arm` many times a day without making the user reinstall.
-- You need to see that tab. `GET /api/contract`, then `agents/glance.js`, then `GET /api/glance`. No second browser, no debugger, no cookie copy. Snapshots are names and labels, never values.
+- `scripts/router.mjs` and `scripts/frame.mjs` rank the five shelf scripts from a glance. Residual net, promotion gate, synthetic held-out score only. Do not import cipher weights. Do not say a rank proves the script is right. `POST /api/route` is the door. The shell stays boring.
 
 ## Do not include it when
 

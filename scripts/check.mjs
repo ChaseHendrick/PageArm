@@ -12,6 +12,8 @@ import { wrapAgent, wrapPacked } from "./wrap.mjs";
 import { compileLook } from "./look.mjs";
 import { crc32 } from "./zip.mjs";
 import { compileError, drawerName, drawerList, server, writeAtomic } from "./serve.mjs";
+import { plan } from "./frame.mjs";
+import { heldOutAccuracy, promote, scoreGlance } from "./router.mjs";
 import { mkdtempSync } from "fs";
 import { tmpdir } from "os";
 
@@ -555,6 +557,19 @@ ok(Array.isArray(drawerList()), "the drawer lists even when it does not exist ye
   ok(readdirSync(dir).every((n) => !n.includes(".tmp-")), "the temporary file does not stay behind");
 }
 
+console.log("router");
+const acc = heldOutAccuracy();
+ok(acc.hit === acc.n && acc.n === 100, "the shelf router ranks every held-out synthetic glance (" + acc.hit + "/" + acc.n + ")");
+ok(scoreGlance({ title: "Lots", headings: [], fields: [], buttons: ["Copy"], table: { rows: [["a", "b"]] } }).family === "table",
+  "a table glance ranks the table script");
+ok(scoreGlance({ title: "Ticket", headings: ["Ticket"], fields: [{ name: "a" }, { name: "b" }, { name: "c" }], buttons: ["Save"], table: null }).family === "fill",
+  "a save form ranks the fill script");
+const kept = promote({ family: "fill", confidence: 0.9, scores: {} }, { family: "table", confidence: 0.4, scores: {} });
+ok(kept.promoted === false && kept.family === "fill" && kept.reason === "worse candidate kept",
+  "a worse family does not replace the one you already hold");
+ok(plan({ headings: ["Notes"], fields: [], buttons: [], table: null, title: "Reading" }, null).script === "glance.js",
+  "the framework names the script, and does not claim the rank is proof");
+
 // Drive the real routes. Only the ones that cannot write, because a check is
 // not allowed to reach into the drawer you are actually using.
 const base = await new Promise((resolve) => {
@@ -632,6 +647,31 @@ try {
   });
   ok(forgedGlance.status === 403 && (await (await desk("/api/glance")).json()).glance.title === "Receiving",
     "a site you visit may not overwrite what the tab showed");
+  const routed = await desk("/api/route", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "chrome-extension://pretendthisisreal" },
+    body: JSON.stringify({ glance: { title: "Lots", headings: [], fields: [], buttons: [], table: { rows: [["a"]] } } }),
+  });
+  const routedBody = await routed.json();
+  ok(routed.status === 200 && routedBody.plan.family === "table" && routedBody.plan.script === "copy-table.js",
+    "the shell may ask which shelf script fits the glance");
+  const weaker = await desk("/api/route", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "chrome-extension://pretendthisisreal" },
+    body: JSON.stringify({
+      glance: { title: "Reading", headings: ["Notes"], fields: [], buttons: [], table: null },
+      held: { family: "table", confidence: 0.99, scores: {} },
+    }),
+  });
+  const weakerBody = await weaker.json();
+  ok(weaker.status === 200 && weakerBody.plan.promoted === false && weakerBody.plan.family === "table",
+    "the desk keeps the stronger family");
+  const forgedRoute = await desk("/api/route", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ title: "nope" }),
+  });
+  ok(forgedRoute.status === 403, "a site you visit may not ask the router");
 
   const asked = await desk("/api/ask", {
     method: "POST",
