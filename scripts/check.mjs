@@ -11,7 +11,9 @@ import { packExtension, buildManifest, TARGETS, normalizeTarget, zipName, VERSIO
 import { wrapAgent, wrapPacked } from "./wrap.mjs";
 import { compileLook } from "./look.mjs";
 import { crc32 } from "./zip.mjs";
-import { compileError, drawerName, drawerList, server } from "./serve.mjs";
+import { compileError, drawerName, drawerList, server, writeAtomic } from "./serve.mjs";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let failures = 0;
@@ -323,7 +325,8 @@ ok(/inputType: "insertText"/.test(wrapped), "type fires InputEvent insertText");
 ok(/function onCleanup/.test(wrapped) && /__PA_CLEANUP/.test(wrapped), "onCleanup is there so a swap can drop listeners");
 ok(/function watch/.test(wrapped) && /function when/.test(wrapped), "watch and when sit next to it");
 ok(/function must/.test(wrapped) && /function ask/.test(wrapped), "must and ask are part of the agent");
-ok(/typeof MutationObserver === "undefined"/.test(wrapped), "watch no-ops the observer when the vm has none");
+ok(/function fromUs/.test(wrapped) && (wrapped.match(/fromUs\(ev\)/g) || []).length >= 2, "ask and capture ignore a message that did not come from this window");
+ok(/if \(running\) return/.test(wrapped), "watch does not re-enter when the callback touches the page");
 
 function runStackRich(parts, extras = {}) {
   const log = [];
@@ -445,6 +448,15 @@ for (const bad of ["../evil", "a/b", "a.b", "", " ", "-lead", "x".repeat(49), "a
   ok(drawerName(bad) === null, "drawer name refused: " + JSON.stringify(bad));
 }
 ok(Array.isArray(drawerList()), "the drawer lists even when it does not exist yet");
+
+{
+  const dir = mkdtempSync(join(tmpdir(), "pagearm-"));
+  const file = join(dir, "agent.js");
+  writeAtomic(file, "one");
+  writeAtomic(file, "two");
+  ok(readFileSync(file, "utf8") === "two", "a save replaces the agent whole, not a torn write");
+  ok(readdirSync(dir).every((n) => !n.includes(".tmp-")), "the temporary file does not stay behind");
+}
 
 // Drive the real routes. Only the ones that cannot write, because a check is
 // not allowed to reach into the drawer you are actually using.

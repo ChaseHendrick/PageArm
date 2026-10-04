@@ -108,6 +108,9 @@ const PREFIX = `(function () {
       }
     } catch (e) {}
   }
+  function fromUs(ev) {
+    return !!(ev && ev.source === window && ev.data && ev.data.source === "pa");
+  }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function capture() {
     return new Promise(function (resolve) {
@@ -119,9 +122,8 @@ const PREFIX = `(function () {
         resolve(url || "");
       }
       function onCap(ev) {
-        var d = ev.data;
-        if (!d || d.source !== "pa" || d.type !== "capture-result") return;
-        finish(d.dataUrl || "");
+        if (!fromUs(ev) || ev.data.type !== "capture-result") return;
+        finish(ev.data.dataUrl || "");
       }
       window.addEventListener("message", onCap);
       try { window.postMessage({ source: "pa", type: "capture" }, "*"); } catch (e) { finish(""); }
@@ -141,8 +143,14 @@ const PREFIX = `(function () {
     }
   }
   function watch(sel, fn) {
+    var running = false;
     function run() {
+      // A callback that touches the page will fire the observer again. Without
+      // this, that turn never ends.
+      if (running) return;
+      running = true;
       try { fn(q(sel)); } catch (eW) {}
+      running = false;
     }
     if (typeof MutationObserver === "undefined") {
       run();
@@ -193,9 +201,8 @@ const PREFIX = `(function () {
         resolve(answer);
       }
       function onAns(ev) {
-        var d = ev.data;
-        if (!d || d.source !== "pa" || d.type !== "ask-result" || d.id !== id) return;
-        finish(d.answer == null ? "" : d.answer);
+        if (!fromUs(ev) || ev.data.type !== "ask-result" || ev.data.id !== id) return;
+        finish(ev.data.answer == null ? "" : ev.data.answer);
       }
       window.addEventListener("message", onAns);
       try {

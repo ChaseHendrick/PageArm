@@ -1,6 +1,7 @@
 import { createServer } from "http";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync, renameSync } from "fs";
 import { dirname, join, extname, resolve, sep } from "path";
+import { randomBytes } from "crypto";
 import { fileURLToPath } from "url";
 import { Script } from "vm";
 import { packExtension, normalizeTarget, zipName } from "./pack.mjs";
@@ -68,9 +69,22 @@ export function loadStack() {
   return out;
 }
 
+// Write the whole file, then swap it into place. A crash in the middle leaves
+// the previous agent, not a half-written one the next tab would run.
+export function writeAtomic(path, text) {
+  const tmp = path + ".tmp-" + randomBytes(4).toString("hex");
+  writeFileSync(tmp, text, "utf8");
+  try {
+    renameSync(tmp, path);
+  } catch (e) {
+    try { rmSync(tmp); } catch (e2) {}
+    throw e;
+  }
+}
+
 function setStack(names) {
   mkdirSync(join(root, "agents"), { recursive: true });
-  writeFileSync(stackPath, JSON.stringify({ stack: names || [] }) + "\n", "utf8");
+  writeAtomic(stackPath, JSON.stringify({ stack: names || [] }) + "\n");
   // Tidy up after the desk that used the old name, so the two cannot disagree.
   try {
     if (existsSync(oldStackPath)) rmSync(oldStackPath);
@@ -511,13 +525,13 @@ async function handle(req, res) {
     }
     if (!bound) {
       mkdirSync(join(root, "agents"), { recursive: true });
-      writeFileSync(currentPath, source, "utf8");
+      writeAtomic(currentPath, source);
       setStack([]);
       send(res, 200, JSON.stringify({ ok: true, bound: null, stack: [] }), "application/json; charset=utf-8");
       return;
     }
     mkdirSync(drawerDir, { recursive: true });
-    writeFileSync(drawerPath(bound), source, "utf8");
+    writeAtomic(drawerPath(bound), source);
     if (!loadStack().includes(bound)) setStack([bound]);
     send(res, 200, JSON.stringify({ ok: true, bound, stack: loadStack() }), "application/json; charset=utf-8");
     return;
@@ -654,7 +668,7 @@ async function handle(req, res) {
       return;
     }
     mkdirSync(drawerDir, { recursive: true });
-    writeFileSync(abs, source, "utf8");
+    writeAtomic(abs, source);
     // A script in the stack is served from this very file, so saving it is
     // already the live change. Nothing to copy, nothing to fall out of step.
     const armed = loadStack().includes(name);
