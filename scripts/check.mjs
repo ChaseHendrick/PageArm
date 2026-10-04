@@ -166,7 +166,60 @@ const askFn = shell.slice(shell.indexOf("function askForUserScripts"), shell.ind
 ok(askFn.indexOf("permissions.request") > 0, "that ask calls permissions.request");
 ok(!/await[\s\S]*permissions\.request/.test(askFn), "the request stays in the click turn, with no await in front of it");
 ok(/if \(inflight\) return inflight/.test(shell), "frames of one navigation share one fetch of /agent.js");
-ok(/u\.origin \+ u\.pathname/.test(shell), "a query or a hash does not hide a page the host list already allows");
+ok(/liveCode\(!!force\)/.test(shell), "a click on P skips the short cache and fetches the desk again");
+ok(/armGen\[tabId\]/.test(shell), "a newer arm wins; a slow one does not write over it");
+ok(/tabs\.onRemoved/.test(shell), "a closed tab drops its arm generation");
+
+// Run the real matcher, not a copy of it. The shell boots against a fake browser.
+{
+  const listeners = () => ({ addListener() {} });
+  const noop = () => {};
+  const hostCtx = {
+    console,
+    URL,
+    setTimeout,
+    clearTimeout,
+    crypto,
+    TextEncoder,
+    fetch: noop,
+    chrome: {
+      runtime: {
+        lastError: null,
+        getManifest() {
+          return {
+            content_scripts: [{
+              matches: ["https://example.com/app/*", "https://shop.example/exact", "https://*.vendor.test/*"],
+            }],
+            optional_permissions: [],
+          };
+        },
+        onMessage: listeners(),
+        onInstalled: listeners(),
+      },
+      webNavigation: { onHistoryStateUpdated: listeners(), onCompleted: listeners() },
+      action: {
+        setIcon: noop,
+        setBadgeText: noop,
+        setBadgeBackgroundColor: noop,
+        setBadgeTextColor: noop,
+        onClicked: listeners(),
+      },
+      tabs: { onRemoved: listeners() },
+    },
+  };
+  hostCtx.globalThis = hostCtx;
+  const hostVm = createContext(hostCtx);
+  new Script(shell.replaceAll("__PA_ORIGIN__", "http://127.0.0.1:8787"), { filename: "background.js" }).runInContext(hostVm);
+  ok(hostVm.onHost("https://example.com/app/page?x=1") === true, "a query does not hide a matched path");
+  ok(hostVm.onHost("https://example.com/app/page#section") === true, "a hash does not hide a matched path");
+  ok(hostVm.onHost("https://shop.example/exact?code=9") === true, "an exact path still matches when a query is present");
+  ok(hostVm.onHost("https://shop.example/exact/nope") === false, "an exact path does not swallow a child");
+  ok(hostVm.onHost("https://a.vendor.test/till") === true, "a star subdomain matches the child");
+  ok(hostVm.onHost("https://vendor.test/till") === true, "and the bare host, the way the browser does");
+  ok(hostVm.onHost("https://evil.vendor.test.not/till") === false, "a lookalike host does not match");
+  ok(hostVm.onHost("http://127.0.0.1:8787/agent.js") === false, "the desk is not a work site");
+  ok(hostVm.onHost("file:///tmp/x") === false, "a file URL is not a work site");
+}
 ok(/type === "oops"/.test(shell) && /type: "oops"/.test(bridgeSrc), "a throw in the page travels to the background");
 ok(/quiet\(fetch\(ORIGIN \+ "\/api\/oops"/.test(shell), "and on to the desk, as a promise nobody leaves unhandled");
 ok(/type === "ask"/.test(bridgeSrc) && /ask-result/.test(bridgeSrc), "the bridge carries ask the way it carries capture");

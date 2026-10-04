@@ -364,9 +364,11 @@ async function digest(s) {
 // One fetch serves every frame of a navigation. Twenty iframes, one trip to the desk.
 var cache = { src: "", at: 0 };
 var inflight = null;
-async function liveCode() {
+async function liveCode(fresh) {
   var now = Date.now();
-  if (cache.src && now - cache.at < CACHE_MS) return cache.src;
+  // A click on P means "what is on the desk right now," not "what we fetched
+  // a second ago." Navigation still shares that short cache across frames.
+  if (!fresh && cache.src && now - cache.at < CACHE_MS) return cache.src;
   if (inflight) return inflight;
   const c = new AbortController();
   const t = setTimeout(function () { c.abort(); }, FETCH_TIMEOUT_MS);
@@ -518,25 +520,32 @@ function ids(list) {
   return list.map(function (p) { return p.frameId; });
 }
 
+var armGen = Object.create(null);
 async function arm(tabId, frameIds, force) {
+  // Two arms can overlap: a slow navigation, then a click on P after you saved.
+  // The later one wins. The earlier one must not inject the agent you just replaced.
+  var gen = (armGen[tabId] = (armGen[tabId] || 0) + 1);
+  function still() { return armGen[tabId] === gen; }
   var target = frameIds && frameIds.length ? frameTarget(tabId, frameIds) : { tabId: tabId, allFrames: true };
   var src = null;
   var ver = "";
   try {
-    src = await liveCode();
-    ver = await digest(src);
+    src = await liveCode(!!force);
+    ver = src ? await digest(src) : "";
   } catch (e) {
     src = null;
   }
+  if (!still()) return;
 
   var ping = await pingFrames(target);
-  if (!ping.length) return;
+  if (!still() || !ping.length) return;
 
   if (src === null) {
     // Desk asleep. Frames with nothing yet get the packed copy, which arms itself.
     var empty = ping.filter(function (p) { return !(p.result && (p.result.ver || p.result.packed)); });
     var have = ping.filter(function (p) { return p.result && (p.result.ver || p.result.packed); });
     await injectPacked(tabId, ids(empty));
+    if (!still()) return;
     if (force) await callArm(tabId, ids(have));
     return;
   }
@@ -545,18 +554,22 @@ async function arm(tabId, frameIds, force) {
   var current = ping.filter(function (p) { return p.result && p.result.ver === ver; });
   var stale = ping.filter(function (p) { return !(p.result && p.result.ver === ver); });
   await callArm(tabId, ids(current));
+  if (!still()) return;
   if (!stale.length) {
     await syncLook(tabId);
     return;
   }
 
   await injectCode(tabId, ids(stale), src, ver);
+  if (!still()) return;
 
   // Whoever did not take the live code (CSP, syntax error) and has nothing else
   // running gets the packed copy so the tab is not left bare.
   var after = await pingFrames(frameTarget(tabId, ids(stale)));
+  if (!still()) return;
   var bare = after.filter(function (p) { return !(p.result && (p.result.ver === ver || p.result.packed)); });
   await injectPacked(tabId, ids(bare));
+  if (!still()) return;
   await syncLook(tabId);
 }
 
@@ -588,6 +601,10 @@ function clickedP(tab) {
 }
 
 api.action.onClicked.addListener(clickedP);
+
+if (api.tabs && api.tabs.onRemoved) {
+  api.tabs.onRemoved.addListener(function (id) { delete armGen[id]; });
+}
 
 api.runtime.onInstalled.addListener(function () {
   paintIcon("idle", false);
