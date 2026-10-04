@@ -84,6 +84,13 @@ const PREFIX = `(function () {
   function type(el, text) {
     if (!el) return;
     try {
+      var inputType = String(el.type || "").toLowerCase();
+      if (inputType === "checkbox" || inputType === "radio") {
+        var on = text === true || text === "true" || text === "on" || text === "1" || text === 1;
+        if (!!el.checked !== on) punch(el);
+        return;
+      }
+      try { if (el.focus) el.focus(); } catch (eF) {}
       var tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
         // Go through the prototype setter so React and friends notice the change.
@@ -108,6 +115,9 @@ const PREFIX = `(function () {
       }
     } catch (e) {}
   }
+  function fromUs(ev) {
+    return !!(ev && ev.source === window && ev.data && ev.data.source === "pa");
+  }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function capture() {
     return new Promise(function (resolve) {
@@ -119,9 +129,8 @@ const PREFIX = `(function () {
         resolve(url || "");
       }
       function onCap(ev) {
-        var d = ev.data;
-        if (!d || d.source !== "pa" || d.type !== "capture-result") return;
-        finish(d.dataUrl || "");
+        if (!fromUs(ev) || ev.data.type !== "capture-result") return;
+        finish(ev.data.dataUrl || "");
       }
       window.addEventListener("message", onCap);
       try { window.postMessage({ source: "pa", type: "capture" }, "*"); } catch (e) { finish(""); }
@@ -141,8 +150,14 @@ const PREFIX = `(function () {
     }
   }
   function watch(sel, fn) {
+    var running = false;
     function run() {
+      // A callback that touches the page will fire the observer again. Without
+      // this, that turn never ends.
+      if (running) return;
+      running = true;
       try { fn(q(sel)); } catch (eW) {}
+      running = false;
     }
     if (typeof MutationObserver === "undefined") {
       run();
@@ -193,9 +208,8 @@ const PREFIX = `(function () {
         resolve(answer);
       }
       function onAns(ev) {
-        var d = ev.data;
-        if (!d || d.source !== "pa" || d.type !== "ask-result" || d.id !== id) return;
-        finish(d.answer == null ? "" : d.answer);
+        if (!fromUs(ev) || ev.data.type !== "ask-result" || ev.data.id !== id) return;
+        finish(ev.data.answer == null ? "" : ev.data.answer);
       }
       window.addEventListener("message", onAns);
       try {
@@ -226,17 +240,106 @@ const PREFIX = `(function () {
       }, "*");
     } catch (e) {}
   }
+  // A short look at the tab the human already has open. Names and labels only.
+  // No field values, no passwords. A coding agent reads it back from the desk.
+  function glance() {
+    var doc = document;
+    function textOf(el, max) {
+      var t = "";
+      try { t = String((el && (el.innerText || el.textContent)) || "").replace(/\s+/g, " ").trim(); } catch (eT) {}
+      return t.slice(0, max || 80);
+    }
+    function collect(sel) {
+      var out = [];
+      function walk(root) {
+        if (!root || !root.querySelectorAll) return;
+        var list = [];
+        try { list = root.querySelectorAll(sel); } catch (eQ) {}
+        for (var i = 0; i < list.length; i++) out.push(list[i]);
+        var all = [];
+        try { all = root.querySelectorAll("*"); } catch (eA) {}
+        for (var j = 0; j < all.length; j++) {
+          var node = all[j];
+          if (!node) continue;
+          if (node.shadowRoot) walk(node.shadowRoot);
+          if (node.tagName === "IFRAME") {
+            try { if (node.contentDocument) walk(node.contentDocument); } catch (eF) {}
+          }
+        }
+      }
+      walk(doc);
+      return out;
+    }
+    var headings = [];
+    var heads = collect("h1, h2, h3");
+    for (var i = 0; i < heads.length && headings.length < 8; i++) {
+      var h = textOf(heads[i], 80);
+      if (h) headings.push(h);
+    }
+    var fields = [];
+    var inputs = collect("input, textarea, select");
+    for (var f = 0; f < inputs.length && fields.length < 12; f++) {
+      var el = inputs[f];
+      var kind = "";
+      try { kind = String(el.type || el.tagName || "").toLowerCase(); } catch (eK) {}
+      if (kind === "hidden" || kind === "password" || kind === "file") continue;
+      var name = "";
+      try {
+        name = el.getAttribute("name") || el.id || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "";
+      } catch (eN) {}
+      name = String(name || "").slice(0, 80);
+      if (!name) continue;
+      fields.push({ tag: String(el.tagName || "").toLowerCase(), type: kind.slice(0, 20), name: name });
+    }
+    var buttons = [];
+    var btns = collect("button, [role=button], input[type=submit]");
+    for (var b = 0; b < btns.length && buttons.length < 12; b++) {
+      var label = textOf(btns[b], 60);
+      if (!label) {
+        try { label = String(btns[b].value || "").slice(0, 60); } catch (eB) {}
+      }
+      if (label) buttons.push(label);
+    }
+    var table = null;
+    var tables = collect("table");
+    if (tables.length) {
+      var rows = [];
+      var trs = [];
+      try { trs = tables[0].querySelectorAll("tr"); } catch (eR) {}
+      for (var r = 0; r < trs.length && rows.length < 4; r++) {
+        var cells = [];
+        var tds = [];
+        try { tds = trs[r].querySelectorAll("th, td"); } catch (eC) {}
+        for (var c = 0; c < tds.length && cells.length < 6; c++) cells.push(textOf(tds[c], 40));
+        if (cells.length) rows.push(cells);
+      }
+      if (rows.length) table = { rows: rows };
+    }
+    var shot = {
+      url: String(location.href || "").slice(0, 300),
+      title: String((doc && doc.title) || "").slice(0, 120),
+      headings: headings,
+      fields: fields,
+      buttons: buttons,
+      table: table,
+    };
+    try { window.postMessage({ source: "pa", type: "glance", glance: shot }, "*"); } catch (eP) {}
+    return shot;
+  }
   var agent = {
     __pa: true,
     origin: window.__PA_ORIGIN || "",
     // A getter, so it follows pushState instead of remembering the first route.
     get match() { return location.hostname + location.pathname; },
     q: q, qa: qa, click: click, punch: punch, type: type, wait: wait, pip: pip, capture: capture,
-    onCleanup: onCleanup, watch: watch, when: when, must: must, ask: ask,
+    onCleanup: onCleanup, watch: watch, when: when, must: must, ask: ask, glance: glance,
     arm: idle
   };
   window.__agent = agent;
   window.__pagearm = agent;
+  // The previous inject registered listeners on this page. Run those before
+  // this copy replaces the hook, or a hot-swap leaves them behind.
+  try { if (typeof window.__PA_CLEANUP === "function") window.__PA_CLEANUP(); } catch (ePrev) {}
   window.__PA_CLEANUP = runCleanups;
   var arms = [];
   agent.scripts = [];

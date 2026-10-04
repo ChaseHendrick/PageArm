@@ -1,12 +1,14 @@
 import { createServer } from "http";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, rmSync, renameSync } from "fs";
 import { dirname, join, extname, resolve, sep } from "path";
+import { randomBytes } from "crypto";
 import { fileURLToPath } from "url";
 import { Script } from "vm";
 import { packExtension, normalizeTarget, zipName } from "./pack.mjs";
 import { pngGlyph } from "./zip.mjs";
 import { wrapAgent } from "./wrap.mjs";
 import { compileLook } from "./look.mjs";
+import { plan } from "./frame.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.PORT || 8787);
@@ -68,9 +70,22 @@ export function loadStack() {
   return out;
 }
 
+// Write the whole file, then swap it into place. A crash in the middle leaves
+// the previous agent, not a half-written one the next tab would run.
+export function writeAtomic(path, text) {
+  const tmp = path + ".tmp-" + randomBytes(4).toString("hex");
+  writeFileSync(tmp, text, "utf8");
+  try {
+    renameSync(tmp, path);
+  } catch (e) {
+    try { rmSync(tmp); } catch (e2) {}
+    throw e;
+  }
+}
+
 function setStack(names) {
   mkdirSync(join(root, "agents"), { recursive: true });
-  writeFileSync(stackPath, JSON.stringify({ stack: names || [] }) + "\n", "utf8");
+  writeAtomic(stackPath, JSON.stringify({ stack: names || [] }) + "\n");
   // Tidy up after the desk that used the old name, so the two cannot disagree.
   try {
     if (existsSync(oldStackPath)) rmSync(oldStackPath);
@@ -182,6 +197,32 @@ function loopbackHost(req) {
 // this is a workshop light, not a log file, and it should not outlive the desk.
 const MAX_OOPS = 10;
 let oopsLog = [];
+let glanceShot = null;
+let lastPlan = null;
+
+function cleanGlance(raw) {
+  const g = raw && typeof raw === "object" ? raw : {};
+  const list = (arr, n, map) => (Array.isArray(arr) ? arr.slice(0, n) : []).map(map).filter(Boolean);
+  const rows = g.table && Array.isArray(g.table.rows)
+    ? g.table.rows.slice(0, 4).map((row) => (Array.isArray(row) ? row.slice(0, 6).map((c) => clamp(c, 40)) : [])).filter((row) => row.length)
+    : [];
+  return {
+    url: clamp(g.url, 300),
+    title: clamp(g.title, 120),
+    headings: list(g.headings, 8, (h) => clamp(h, 80)),
+    fields: list(g.fields, 12, (f) => {
+      if (!f || typeof f !== "object") return null;
+      const type = clamp(f.type, 20).toLowerCase();
+      if (type === "password" || type === "hidden" || type === "file") return null;
+      const name = clamp(f.name, 80);
+      if (!name) return null;
+      return { tag: clamp(f.tag, 20), type, name };
+    }),
+    buttons: list(g.buttons, 12, (b) => clamp(b, 60)),
+    table: rows.length ? { rows } : null,
+    at: Date.now(),
+  };
+}
 const MAX_MUST = 20;
 let mustLog = [];
 const MAX_ASK_ANSWERS = 10;
@@ -511,13 +552,13 @@ async function handle(req, res) {
     }
     if (!bound) {
       mkdirSync(join(root, "agents"), { recursive: true });
-      writeFileSync(currentPath, source, "utf8");
+      writeAtomic(currentPath, source);
       setStack([]);
       send(res, 200, JSON.stringify({ ok: true, bound: null, stack: [] }), "application/json; charset=utf-8");
       return;
     }
     mkdirSync(drawerDir, { recursive: true });
-    writeFileSync(drawerPath(bound), source, "utf8");
+    writeAtomic(drawerPath(bound), source);
     if (!loadStack().includes(bound)) setStack([bound]);
     send(res, 200, JSON.stringify({ ok: true, bound, stack: loadStack() }), "application/json; charset=utf-8");
     return;
@@ -654,11 +695,87 @@ async function handle(req, res) {
       return;
     }
     mkdirSync(drawerDir, { recursive: true });
-    writeFileSync(abs, source, "utf8");
+    writeAtomic(abs, source);
     // A script in the stack is served from this very file, so saving it is
     // already the live change. Nothing to copy, nothing to fall out of step.
     const armed = loadStack().includes(name);
     send(res, 200, JSON.stringify({ ok: true, name, stack: loadStack(), armed, scripts: drawerList() }), "application/json; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/api/contract" && req.method === "GET") {
+    send(res, 200, JSON.stringify({
+      name: "pagearm",
+      use: "The human is already logged into the tab. Read it or act on it without a second browser and without attaching a debugger.",
+      not: "A clean browser for CI. Use Playwright for that.",
+      read: "GET /api/glance",
+      route: "POST /api/route",
+      act: "POST /api/agent with { source }. The next navigation, or a click on P, runs it.",
+      sample: "agents/glance.js",
+    }), "application/json; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/api/glance") {
+    if (req.method === "GET") {
+      send(res, 200, JSON.stringify({ glance: glanceShot }), "application/json; charset=utf-8");
+      return;
+    }
+    if (req.method === "DELETE") {
+      if (!sameSite(req)) {
+        send(res, 403, "only the desk may clear that");
+        return;
+      }
+      glanceShot = null;
+      send(res, 200, JSON.stringify({ ok: true, glance: null }), "application/json; charset=utf-8");
+      return;
+    }
+    if (req.method !== "POST") {
+      send(res, 405, "not that way");
+      return;
+    }
+    if (!fromShell(req)) {
+      send(res, 403, "only the shell may report that");
+      return;
+    }
+    let told = {};
+    try {
+      told = JSON.parse((await readBody(req)) || "{}");
+    } catch (e) {
+      send(res, e && e.message === "too big" ? 413 : 400, e && e.message === "too big" ? "too big" : "bad json");
+      return;
+    }
+    glanceShot = cleanGlance(told);
+    send(res, 200, JSON.stringify({ ok: true }), "application/json; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/api/route") {
+    if (req.method === "GET") {
+      send(res, 200, JSON.stringify({ plan: lastPlan }), "application/json; charset=utf-8");
+      return;
+    }
+    if (req.method !== "POST") {
+      send(res, 405, "not that way");
+      return;
+    }
+    if (!fromShell(req)) {
+      send(res, 403, "only the shell may ask");
+      return;
+    }
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || "{}");
+    } catch (e) {
+      send(res, e && e.message === "too big" ? 413 : 400, e && e.message === "too big" ? "too big" : "bad json");
+      return;
+    }
+    const glance = body.glance && typeof body.glance === "object" ? body.glance : body;
+    const held = body.held && typeof body.held === "object"
+      ? body.held
+      : (lastPlan ? { family: lastPlan.family, confidence: lastPlan.confidence, scores: lastPlan.scores } : null);
+    lastPlan = plan(glance, held);
+    send(res, 200, JSON.stringify({ ok: true, plan: lastPlan }), "application/json; charset=utf-8");
     return;
   }
 
@@ -1082,6 +1199,7 @@ async function handle(req, res) {
 
   if (url.pathname === "/api/examples") {
     const names = [
+      "glance.js",
       "fill-sample.js",
       "copy-table.js",
       "dump-form.js",

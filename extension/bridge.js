@@ -41,6 +41,9 @@ window.addEventListener("message", function (ev) {
   if (d.type === "must") {
     send({ type: "must", sel: d.sel || "", ok: !!d.ok, note: d.note || "" });
   }
+  if (d.type === "glance") {
+    send({ type: "glance", glance: d.glance || {} });
+  }
   if (d.type === "capture") {
     send({ type: "capture" }, function (res) {
       try {

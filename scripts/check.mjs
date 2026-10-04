@@ -11,7 +11,11 @@ import { packExtension, buildManifest, TARGETS, normalizeTarget, zipName, VERSIO
 import { wrapAgent, wrapPacked } from "./wrap.mjs";
 import { compileLook } from "./look.mjs";
 import { crc32 } from "./zip.mjs";
-import { compileError, drawerName, drawerList, server } from "./serve.mjs";
+import { compileError, drawerName, drawerList, server, writeAtomic } from "./serve.mjs";
+import { plan } from "./frame.mjs";
+import { heldOutAccuracy, promote, scoreGlance } from "./router.mjs";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 let failures = 0;
@@ -161,12 +165,71 @@ for (const [label, src] of [["background.js", shell], ["bridge.js", bridgeSrc]])
 }
 ok(/webNavigation\.onHistoryStateUpdated/.test(shell) && /if \(api\.webNavigation\.onHistoryStateUpdated\)/.test(shell),
   "background.js guards the navigation event Safari does not have");
-ok(/type === "nav"/.test(shell) && /type: "nav"/.test(bridgeSrc), "the bridge covers that gap with a nav message");
+ok(/function askForUserScripts/.test(shell), "a click on P can ask Firefox for userScripts");
+const askFn = shell.slice(shell.indexOf("function askForUserScripts"), shell.indexOf("async function runUserScript"));
+ok(askFn.indexOf("permissions.request") > 0, "that ask calls permissions.request");
+ok(!/await[\s\S]*permissions\.request/.test(askFn), "the request stays in the click turn, with no await in front of it");
+ok(/if \(inflight\) return inflight/.test(shell), "frames of one navigation share one fetch of /agent.js");
+ok(/liveCode\(!!force\)/.test(shell), "a click on P skips the short cache and fetches the desk again");
+ok(/armGen\[tabId\]/.test(shell), "a newer arm wins; a slow one does not write over it");
+ok(/tabs\.onRemoved/.test(shell), "a closed tab drops its arm generation");
+
+// Run the real matcher, not a copy of it. The shell boots against a fake browser.
+{
+  const listeners = () => ({ addListener() {} });
+  const noop = () => {};
+  const hostCtx = {
+    console,
+    URL,
+    setTimeout,
+    clearTimeout,
+    crypto,
+    TextEncoder,
+    fetch: noop,
+    chrome: {
+      runtime: {
+        lastError: null,
+        getManifest() {
+          return {
+            content_scripts: [{
+              matches: ["https://example.com/app/*", "https://shop.example/exact", "https://*.vendor.test/*"],
+            }],
+            optional_permissions: [],
+          };
+        },
+        onMessage: listeners(),
+        onInstalled: listeners(),
+      },
+      webNavigation: { onHistoryStateUpdated: listeners(), onCompleted: listeners() },
+      action: {
+        setIcon: noop,
+        setBadgeText: noop,
+        setBadgeBackgroundColor: noop,
+        setBadgeTextColor: noop,
+        onClicked: listeners(),
+      },
+      tabs: { onRemoved: listeners() },
+    },
+  };
+  hostCtx.globalThis = hostCtx;
+  const hostVm = createContext(hostCtx);
+  new Script(shell.replaceAll("__PA_ORIGIN__", "http://127.0.0.1:8787"), { filename: "background.js" }).runInContext(hostVm);
+  ok(hostVm.onHost("https://example.com/app/page?x=1") === true, "a query does not hide a matched path");
+  ok(hostVm.onHost("https://example.com/app/page#section") === true, "a hash does not hide a matched path");
+  ok(hostVm.onHost("https://shop.example/exact?code=9") === true, "an exact path still matches when a query is present");
+  ok(hostVm.onHost("https://shop.example/exact/nope") === false, "an exact path does not swallow a child");
+  ok(hostVm.onHost("https://a.vendor.test/till") === true, "a star subdomain matches the child");
+  ok(hostVm.onHost("https://vendor.test/till") === true, "and the bare host, the way the browser does");
+  ok(hostVm.onHost("https://evil.vendor.test.not/till") === false, "a lookalike host does not match");
+  ok(hostVm.onHost("http://127.0.0.1:8787/agent.js") === false, "the desk is not a work site");
+  ok(hostVm.onHost("file:///tmp/x") === false, "a file URL is not a work site");
+}
 ok(/type === "oops"/.test(shell) && /type: "oops"/.test(bridgeSrc), "a throw in the page travels to the background");
 ok(/quiet\(fetch\(ORIGIN \+ "\/api\/oops"/.test(shell), "and on to the desk, as a promise nobody leaves unhandled");
 ok(/type === "ask"/.test(bridgeSrc) && /ask-result/.test(bridgeSrc), "the bridge carries ask the way it carries capture");
 ok(/ORIGIN \+ "\/api\/ask"/.test(shell), "ask polls the desk");
-ok(/type === "must"/.test(bridgeSrc) && /ORIGIN \+ "\/api\/must"/.test(shell), "must travels to the desk, quietly");
+ok(/type === "glance"/.test(shell) && /type === "glance"/.test(bridgeSrc), "a glance of the live tab travels to the desk");
+ok(/frameId !== 0/.test(shell), "a child frame cannot overwrite the glance of the page you are looking at");
 ok(/look-on/.test(bridgeSrc) && /look-off/.test(bridgeSrc), "the bridge starts and stops look from a worker message");
 ok(/ORIGIN \+ "\/api\/look"/.test(shell) && /tabs\.sendMessage/.test(shell), "look records through the desk, and P turns it on");
 ok(/function pickTarget/.test(bridgeSrc), "look walks composedPath to the control, not a span inside it");
@@ -187,6 +250,7 @@ for (const n of readdirSync(join(root, "agents")).filter((f) => f.endsWith(".js"
   parses(wrapAgent(src), "wrapped " + n);
   parses(wrapPacked(src), "packed " + n);
 }
+ok(/window\.top === window/.test(readFileSync(join(root, "agents/glance.js"), "utf8")), "glance.js stays quiet in a frame");
 function runPacked(origin) {
   const win = { __PA_ORIGIN: "http://127.0.0.1:8787", origin, postMessage() {} };
   const ctx = createContext({ window: win, console, location: { hostname: "x", pathname: "/" }, setTimeout: () => 0 });
@@ -264,8 +328,9 @@ ok(/isPrimary: true/.test(wrapped), "punch says it is the primary pointer");
 ok(/inputType: "insertText"/.test(wrapped), "type fires InputEvent insertText");
 ok(/function onCleanup/.test(wrapped) && /__PA_CLEANUP/.test(wrapped), "onCleanup is there so a swap can drop listeners");
 ok(/function watch/.test(wrapped) && /function when/.test(wrapped), "watch and when sit next to it");
-ok(/function must/.test(wrapped) && /function ask/.test(wrapped), "must and ask are part of the agent");
-ok(/typeof MutationObserver === "undefined"/.test(wrapped), "watch no-ops the observer when the vm has none");
+ok(/function glance/.test(wrapped) && /glance: glance/.test(wrapped), "glance is on the agent, for the tab a coding agent cannot see");
+ok(/function fromUs/.test(wrapped) && (wrapped.match(/fromUs\(ev\)/g) || []).length >= 2, "ask and capture ignore a message that did not come from this window");
+ok(/if \(running\) return/.test(wrapped), "watch does not re-enter when the callback touches the page");
 
 function runStackRich(parts, extras = {}) {
   const log = [];
@@ -304,6 +369,43 @@ cleaned.agent.arm();
 ok(cleaned.log.filter((l) => l === "arm" || l === "clean").join(",") === "arm,clean,arm",
   "the next arm drops the last run's cleanup before it starts");
 
+{
+  const swapLog = [];
+  const swapWin = {
+    __PA_ORIGIN: "http://127.0.0.1:8787",
+    __log: swapLog,
+    postMessage(msg) {
+      if (msg && msg.type === "pip") swapLog.push("pip");
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const swapCtx = createContext({
+    Array, Object, String, Number, Boolean, Math, JSON, Error, Promise,
+    window: swapWin,
+    document: { querySelector() { return null; }, querySelectorAll() { return []; } },
+    console: { warn() {} },
+    location: { hostname: "example.com", pathname: "/", href: "https://example.com/" },
+    setTimeout: () => 0,
+  });
+  const first = "agent.arm = function () { agent.onCleanup(function () { window.__swapped = (window.__swapped || 0) + 1; }); };";
+  const second = "agent.arm = function () {};";
+  new Script(wrapAgent(first), { filename: "agent.js" }).runInContext(swapCtx);
+  new Script(wrapAgent(second), { filename: "agent.js" }).runInContext(swapCtx);
+  ok(swapWin.__swapped === 1, "a hot-swap runs the previous cleanup before the new agent arms");
+}
+
+{
+  const box = { tagName: "INPUT", type: "checkbox", checked: false, click() { this.checked = !this.checked; } };
+  const typed = runStackRich([{
+    name: "box",
+    source: "agent.arm = function () { agent.type(window.__box, 'true'); agent.type(window.__box, 'true'); };",
+  }]);
+  typed.window.__box = box;
+  typed.agent.arm();
+  ok(box.checked === true, "type checks a checkbox, and a second type does not undo it");
+}
+
 const pay = { id: "pay", hidden: false };
 const shadow = {
   querySelector(sel) { return sel === "#pay" ? pay : null; },
@@ -334,6 +436,64 @@ const asked = runStackRich([{
   source: "agent.arm = function () { agent.ask('which boat', ['heron', 'mackerel']); };",
 }]);
 ok(asked.log.indexOf("ask:which boat") >= 0, "ask posts to the page");
+
+const seen = runStackRich([{
+  name: "see",
+  source: "agent.arm = function () { window.__shot = agent.glance(); };",
+}], {
+  document: {
+    title: "Receiving",
+    querySelectorAll(sel) {
+      if (sel === "h1, h2, h3") return [{ innerText: "Hold" }];
+      if (String(sel).indexOf("input") === 0) {
+        return [
+          { tagName: "INPUT", type: "password", id: "pw", getAttribute() { return "pw"; } },
+          { tagName: "INPUT", type: "text", id: "", getAttribute(n) { return n === "name" ? "vessel" : ""; } },
+        ];
+      }
+      if (String(sel).indexOf("button") === 0) return [{ innerText: "Save", tagName: "BUTTON", value: "" }];
+      if (sel === "table") return [];
+      return [];
+    },
+    querySelector() { return null; },
+  },
+});
+ok(seen.window.__shot && seen.window.__shot.title === "Receiving" && seen.window.__shot.headings[0] === "Hold",
+  "glance reads the title and the headings");
+ok(seen.window.__shot.fields.length === 1 && seen.window.__shot.fields[0].name === "vessel",
+  "glance keeps a field name and drops a password");
+ok(!JSON.stringify(seen.window.__shot).includes("pw"), "a password does not appear in the snapshot at all");
+ok(seen.window.__shot.buttons[0] === "Save" && seen.log.indexOf("glance") >= 0, "glance names the button and posts it");
+
+const tillAmount = { tagName: "INPUT", type: "text", id: "", getAttribute(n) { return n === "name" ? "amount" : ""; } };
+const tillPay = { tagName: "BUTTON", type: "button", innerText: "Pay till", value: "", getAttribute() { return ""; } };
+const tillShadow = {
+  querySelectorAll(sel) {
+    const s = String(sel);
+    if (s.indexOf("input") === 0) return [tillAmount];
+    if (s.indexOf("button") === 0) return [tillPay];
+    if (s === "*") return [tillAmount, tillPay];
+    return [];
+  },
+};
+const tillHost = { tagName: "WHARF-TILL", shadowRoot: tillShadow };
+const shadowed = runStackRich([{
+  name: "shadow",
+  source: "agent.arm = function () { window.__shot = agent.glance(); };",
+}], {
+  document: {
+    title: "Wharf",
+    querySelectorAll(sel) {
+      const s = String(sel);
+      if (s === "*") return [tillHost];
+      if (s === "h1, h2, h3") return [{ innerText: "Till" }];
+      return [];
+    },
+    querySelector() { return null; },
+  },
+});
+ok(shadowed.window.__shot.fields.some((f) => f.name === "amount") && shadowed.window.__shot.buttons.indexOf("Pay till") >= 0,
+  "glance sees a field and a button inside an open shadow root");
 
 const watched = runStackRich([{
   name: "w",
@@ -388,6 +548,28 @@ for (const bad of ["../evil", "a/b", "a.b", "", " ", "-lead", "x".repeat(49), "a
 }
 ok(Array.isArray(drawerList()), "the drawer lists even when it does not exist yet");
 
+{
+  const dir = mkdtempSync(join(tmpdir(), "pagearm-"));
+  const file = join(dir, "agent.js");
+  writeAtomic(file, "one");
+  writeAtomic(file, "two");
+  ok(readFileSync(file, "utf8") === "two", "a save replaces the agent whole, not a torn write");
+  ok(readdirSync(dir).every((n) => !n.includes(".tmp-")), "the temporary file does not stay behind");
+}
+
+console.log("router");
+const acc = heldOutAccuracy();
+ok(acc.hit === acc.n && acc.n === 100, "the shelf router ranks every held-out synthetic glance (" + acc.hit + "/" + acc.n + ")");
+ok(scoreGlance({ title: "Lots", headings: [], fields: [], buttons: ["Copy"], table: { rows: [["a", "b"]] } }).family === "table",
+  "a table glance ranks the table script");
+ok(scoreGlance({ title: "Ticket", headings: ["Ticket"], fields: [{ name: "a" }, { name: "b" }, { name: "c" }], buttons: ["Save"], table: null }).family === "fill",
+  "a save form ranks the fill script");
+const kept = promote({ family: "fill", confidence: 0.9, scores: {} }, { family: "table", confidence: 0.4, scores: {} });
+ok(kept.promoted === false && kept.family === "fill" && kept.reason === "worse candidate kept",
+  "a worse family does not replace the one you already hold");
+ok(plan({ headings: ["Notes"], fields: [], buttons: [], table: null, title: "Reading" }, null).script === "glance.js",
+  "the framework names the script, and does not claim the rank is proof");
+
 // Drive the real routes. Only the ones that cannot write, because a check is
 // not allowed to reach into the drawer you are actually using.
 const base = await new Promise((resolve) => {
@@ -440,6 +622,56 @@ try {
     "it keeps the last ten, newest first, and does not grow forever");
   const cleared = await desk("/api/oops", { method: "DELETE" });
   ok(cleared.status === 200 && (await (await desk("/api/oops")).json()).errors.length === 0, "and the desk can clear them");
+
+  const card = await (await desk("/api/contract")).json();
+  ok(card.read === "GET /api/glance" && /Playwright/.test(card.not), "the contract tells an agent when this is the tool, and when it is not");
+  const glanced = await desk("/api/glance", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "chrome-extension://pretendthisisreal" },
+    body: JSON.stringify({
+      url: "https://example.com/till",
+      title: "Receiving",
+      headings: ["Hold"],
+      fields: [{ tag: "input", type: "password", name: "pw" }, { tag: "input", type: "text", name: "vessel" }],
+      buttons: ["Save"],
+    }),
+  });
+  ok(glanced.status === 200, "the shell may post a glance");
+  const shot = (await (await desk("/api/glance")).json()).glance;
+  ok(shot.title === "Receiving" && shot.fields.length === 1 && shot.fields[0].name === "vessel" && !JSON.stringify(shot).includes("pw"),
+    "the desk keeps the names and drops the password");
+  const forgedGlance = await desk("/api/glance", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ title: "nope" }),
+  });
+  ok(forgedGlance.status === 403 && (await (await desk("/api/glance")).json()).glance.title === "Receiving",
+    "a site you visit may not overwrite what the tab showed");
+  const routed = await desk("/api/route", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "chrome-extension://pretendthisisreal" },
+    body: JSON.stringify({ glance: { title: "Lots", headings: [], fields: [], buttons: [], table: { rows: [["a"]] } } }),
+  });
+  const routedBody = await routed.json();
+  ok(routed.status === 200 && routedBody.plan.family === "table" && routedBody.plan.script === "copy-table.js",
+    "the shell may ask which shelf script fits the glance");
+  const weaker = await desk("/api/route", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "chrome-extension://pretendthisisreal" },
+    body: JSON.stringify({
+      glance: { title: "Reading", headings: ["Notes"], fields: [], buttons: [], table: null },
+      held: { family: "table", confidence: 0.99, scores: {} },
+    }),
+  });
+  const weakerBody = await weaker.json();
+  ok(weaker.status === 200 && weakerBody.plan.promoted === false && weakerBody.plan.family === "table",
+    "the desk keeps the stronger family");
+  const forgedRoute = await desk("/api/route", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ title: "nope" }),
+  });
+  ok(forgedRoute.status === 403, "a site you visit may not ask the router");
 
   const asked = await desk("/api/ask", {
     method: "POST",

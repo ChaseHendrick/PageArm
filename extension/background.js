@@ -72,7 +72,10 @@ function onHost(url) {
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
     // The desk is the workshop, not a work site. Leave it alone.
     if (u.origin === ORIGIN) return false;
-    return MATCHES.some(function (re) { return re.test(url); });
+    // Match the way the browser does: path only. A query or a hash must not
+    // hide a page that the host list already allows.
+    var bare = u.origin + u.pathname;
+    return MATCHES.some(function (re) { return re.test(bare); });
   } catch (e) {
     return false;
   }
@@ -217,6 +220,14 @@ api.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     });
     return;
   }
+  if (msg.type === "glance") {
+    // Child frames also run the agent. Their glance is usually empty, and it
+    // used to replace the page the human is actually looking at.
+    var frameId = sender && typeof sender.frameId === "number" ? sender.frameId : 0;
+    if (frameId !== 0) return;
+    tellGlance(msg.glance && typeof msg.glance === "object" ? msg.glance : {});
+    return;
+  }
   if (msg.type === "look") {
     var nodes = Array.isArray(msg.nodes) ? msg.nodes.slice(0, 80) : undefined;
     tellLook({
@@ -308,6 +319,16 @@ function tellMust(entry) {
   } catch (e) {}
 }
 
+function tellGlance(entry) {
+  try {
+    quiet(fetch(ORIGIN + "/api/glance", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: JSON.stringify(entry),
+    }));
+  } catch (e) {}
+}
+
 function tellLook(entry) {
   try {
     quiet(fetch(ORIGIN + "/api/look", {
@@ -360,20 +381,28 @@ async function digest(s) {
 
 // One fetch serves every frame of a navigation. Twenty iframes, one trip to the desk.
 var cache = { src: "", at: 0 };
-async function liveCode() {
+var inflight = null;
+async function liveCode(fresh) {
   var now = Date.now();
-  if (cache.src && now - cache.at < CACHE_MS) return cache.src;
+  // A click on P means "what is on the desk right now," not "what we fetched
+  // a second ago." Navigation still shares that short cache across frames.
+  if (!fresh && cache.src && now - cache.at < CACHE_MS) return cache.src;
+  if (inflight) return inflight;
   const c = new AbortController();
   const t = setTimeout(function () { c.abort(); }, FETCH_TIMEOUT_MS);
-  try {
-    const r = await fetch(ORIGIN + "/agent.js?v=" + now, { cache: "no-store", signal: c.signal });
-    if (!r.ok) throw new Error("agent");
-    const src = await r.text();
-    cache = { src: src, at: Date.now() };
-    return src;
-  } finally {
-    clearTimeout(t);
-  }
+  inflight = (async function () {
+    try {
+      const r = await fetch(ORIGIN + "/agent.js?v=" + Date.now(), { cache: "no-store", signal: c.signal });
+      if (!r.ok) throw new Error("agent");
+      const src = await r.text();
+      cache = { src: src, at: Date.now() };
+      return src;
+    } finally {
+      clearTimeout(t);
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 function exec(opts) {
@@ -441,21 +470,22 @@ function userScripts() {
   }
 }
 
-// Firefox keeps userScripts behind an optional permission, so a click on P is
-// the only moment it will let us ask. We ask once, and we take no for an answer.
-// Chromium lists userScripts as a required permission and uses a toggle on the
-// Details page instead, so this never fires there. Safari has no such API.
+// Firefox only shows the optional-permission prompt if request() is called in
+// the same turn as the click on P. An await before it drops the gesture and
+// the prompt never appears, so the first yes never happens. A permission that
+// is already granted resolves true and does not prompt again.
 var askedForUserScripts = false;
-async function askForUserScripts() {
-  if (askedForUserScripts || userScripts()) return;
+function askForUserScripts() {
+  if (askedForUserScripts || userScripts()) return Promise.resolve();
   askedForUserScripts = true;
   try {
     var optional = (api.runtime.getManifest().optional_permissions || []);
-    if (optional.indexOf("userScripts") < 0) return;
-    if (!api.permissions || typeof api.permissions.request !== "function") return;
-    if (await api.permissions.contains({ permissions: ["userScripts"] })) return;
-    await api.permissions.request({ permissions: ["userScripts"] });
-  } catch (e) {}
+    if (optional.indexOf("userScripts") < 0) return Promise.resolve();
+    if (!api.permissions || typeof api.permissions.request !== "function") return Promise.resolve();
+    return Promise.resolve(api.permissions.request({ permissions: ["userScripts"] })).catch(function () {});
+  } catch (e) {
+    return Promise.resolve();
+  }
 }
 
 // Firefox validates option bags strictly and rejects a property it does not
@@ -508,25 +538,32 @@ function ids(list) {
   return list.map(function (p) { return p.frameId; });
 }
 
+var armGen = Object.create(null);
 async function arm(tabId, frameIds, force) {
+  // Two arms can overlap: a slow navigation, then a click on P after you saved.
+  // The later one wins. The earlier one must not inject the agent you just replaced.
+  var gen = (armGen[tabId] = (armGen[tabId] || 0) + 1);
+  function still() { return armGen[tabId] === gen; }
   var target = frameIds && frameIds.length ? frameTarget(tabId, frameIds) : { tabId: tabId, allFrames: true };
   var src = null;
   var ver = "";
   try {
-    src = await liveCode();
-    ver = await digest(src);
+    src = await liveCode(!!force);
+    ver = src ? await digest(src) : "";
   } catch (e) {
     src = null;
   }
+  if (!still()) return;
 
   var ping = await pingFrames(target);
-  if (!ping.length) return;
+  if (!still() || !ping.length) return;
 
   if (src === null) {
     // Desk asleep. Frames with nothing yet get the packed copy, which arms itself.
     var empty = ping.filter(function (p) { return !(p.result && (p.result.ver || p.result.packed)); });
     var have = ping.filter(function (p) { return p.result && (p.result.ver || p.result.packed); });
     await injectPacked(tabId, ids(empty));
+    if (!still()) return;
     if (force) await callArm(tabId, ids(have));
     return;
   }
@@ -535,18 +572,22 @@ async function arm(tabId, frameIds, force) {
   var current = ping.filter(function (p) { return p.result && p.result.ver === ver; });
   var stale = ping.filter(function (p) { return !(p.result && p.result.ver === ver); });
   await callArm(tabId, ids(current));
+  if (!still()) return;
   if (!stale.length) {
     await syncLook(tabId);
     return;
   }
 
   await injectCode(tabId, ids(stale), src, ver);
+  if (!still()) return;
 
   // Whoever did not take the live code (CSP, syntax error) and has nothing else
   // running gets the packed copy so the tab is not left bare.
   var after = await pingFrames(frameTarget(tabId, ids(stale)));
+  if (!still()) return;
   var bare = after.filter(function (p) { return !(p.result && (p.result.ver === ver || p.result.packed)); });
   await injectPacked(tabId, ids(bare));
+  if (!still()) return;
   await syncLook(tabId);
 }
 
@@ -568,12 +609,20 @@ if (api.webNavigation.onHistoryStateUpdated) {
 // says so, the same test every navigation already passes.
 function clickedP(tab) {
   if (!tab || !tab.id) return;
-  askForUserScripts().catch(function () {});
+  var asking = askForUserScripts();
   if (!onHost(String(tab.url || ""))) return;
-  arm(tab.id, undefined, true).catch(function () {});
+  // Arm after the answer, so the click that grants userScripts is the click
+  // that can use it. Chromium and Safari resolve immediately.
+  Promise.resolve(asking).then(function () {
+    return arm(tab.id, undefined, true);
+  }).catch(function () {});
 }
 
 api.action.onClicked.addListener(clickedP);
+
+if (api.tabs && api.tabs.onRemoved) {
+  api.tabs.onRemoved.addListener(function (id) { delete armGen[id]; });
+}
 
 api.runtime.onInstalled.addListener(function () {
   paintIcon("idle", false);
