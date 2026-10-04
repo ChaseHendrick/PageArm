@@ -233,13 +233,81 @@ const PREFIX = `(function () {
       }, "*");
     } catch (e) {}
   }
+  // A short look at the tab the human already has open. Names and labels only.
+  // No field values, no passwords. A coding agent reads it back from the desk.
+  function glance() {
+    var doc = document;
+    function textOf(el, max) {
+      var t = "";
+      try { t = String((el && (el.innerText || el.textContent)) || "").replace(/\s+/g, " ").trim(); } catch (eT) {}
+      return t.slice(0, max || 80);
+    }
+    function nodes(sel) {
+      try { return doc.querySelectorAll ? doc.querySelectorAll(sel) : []; } catch (eQ) { return []; }
+    }
+    var headings = [];
+    var heads = nodes("h1, h2, h3");
+    for (var i = 0; i < heads.length && headings.length < 8; i++) {
+      var h = textOf(heads[i], 80);
+      if (h) headings.push(h);
+    }
+    var fields = [];
+    var inputs = nodes("input, textarea, select");
+    for (var f = 0; f < inputs.length && fields.length < 12; f++) {
+      var el = inputs[f];
+      var kind = "";
+      try { kind = String(el.type || el.tagName || "").toLowerCase(); } catch (eK) {}
+      if (kind === "hidden" || kind === "password" || kind === "file") continue;
+      var name = "";
+      try {
+        name = el.getAttribute("name") || el.id || el.getAttribute("aria-label") || el.getAttribute("placeholder") || "";
+      } catch (eN) {}
+      name = String(name || "").slice(0, 80);
+      if (!name) continue;
+      fields.push({ tag: String(el.tagName || "").toLowerCase(), type: kind.slice(0, 20), name: name });
+    }
+    var buttons = [];
+    var btns = nodes("button, [role=button], input[type=submit]");
+    for (var b = 0; b < btns.length && buttons.length < 12; b++) {
+      var label = textOf(btns[b], 60);
+      if (!label) {
+        try { label = String(btns[b].value || "").slice(0, 60); } catch (eB) {}
+      }
+      if (label) buttons.push(label);
+    }
+    var table = null;
+    var tables = nodes("table");
+    if (tables.length) {
+      var rows = [];
+      var trs = [];
+      try { trs = tables[0].querySelectorAll("tr"); } catch (eR) {}
+      for (var r = 0; r < trs.length && rows.length < 4; r++) {
+        var cells = [];
+        var tds = [];
+        try { tds = trs[r].querySelectorAll("th, td"); } catch (eC) {}
+        for (var c = 0; c < tds.length && cells.length < 6; c++) cells.push(textOf(tds[c], 40));
+        if (cells.length) rows.push(cells);
+      }
+      if (rows.length) table = { rows: rows };
+    }
+    var shot = {
+      url: String(location.href || "").slice(0, 300),
+      title: String((doc && doc.title) || "").slice(0, 120),
+      headings: headings,
+      fields: fields,
+      buttons: buttons,
+      table: table,
+    };
+    try { window.postMessage({ source: "pa", type: "glance", glance: shot }, "*"); } catch (eP) {}
+    return shot;
+  }
   var agent = {
     __pa: true,
     origin: window.__PA_ORIGIN || "",
     // A getter, so it follows pushState instead of remembering the first route.
     get match() { return location.hostname + location.pathname; },
     q: q, qa: qa, click: click, punch: punch, type: type, wait: wait, pip: pip, capture: capture,
-    onCleanup: onCleanup, watch: watch, when: when, must: must, ask: ask,
+    onCleanup: onCleanup, watch: watch, when: when, must: must, ask: ask, glance: glance,
     arm: idle
   };
   window.__agent = agent;

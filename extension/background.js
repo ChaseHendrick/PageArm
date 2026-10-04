@@ -220,6 +220,10 @@ api.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     });
     return;
   }
+  if (msg.type === "glance") {
+    tellGlance(msg.glance && typeof msg.glance === "object" ? msg.glance : {});
+    return;
+  }
   if (msg.type === "look") {
     var nodes = Array.isArray(msg.nodes) ? msg.nodes.slice(0, 80) : undefined;
     tellLook({
@@ -304,6 +308,16 @@ function tellMust(entry) {
   lastMust = { key: key, at: now };
   try {
     quiet(fetch(ORIGIN + "/api/must", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body: JSON.stringify(entry),
+    }));
+  } catch (e) {}
+}
+
+function tellGlance(entry) {
+  try {
+    quiet(fetch(ORIGIN + "/api/glance", {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=UTF-8" },
       body: JSON.stringify(entry),

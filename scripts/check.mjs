@@ -226,7 +226,8 @@ ok(/type === "oops"/.test(shell) && /type: "oops"/.test(bridgeSrc), "a throw in 
 ok(/quiet\(fetch\(ORIGIN \+ "\/api\/oops"/.test(shell), "and on to the desk, as a promise nobody leaves unhandled");
 ok(/type === "ask"/.test(bridgeSrc) && /ask-result/.test(bridgeSrc), "the bridge carries ask the way it carries capture");
 ok(/ORIGIN \+ "\/api\/ask"/.test(shell), "ask polls the desk");
-ok(/type === "must"/.test(bridgeSrc) && /ORIGIN \+ "\/api\/must"/.test(shell), "must travels to the desk, quietly");
+ok(/type === "glance"/.test(shell) && /type === "glance"/.test(bridgeSrc), "a glance of the live tab travels to the desk");
+ok(/ORIGIN \+ "\/api\/glance"/.test(shell), "glance is posted as text, the same way oops is");
 ok(/look-on/.test(bridgeSrc) && /look-off/.test(bridgeSrc), "the bridge starts and stops look from a worker message");
 ok(/ORIGIN \+ "\/api\/look"/.test(shell) && /tabs\.sendMessage/.test(shell), "look records through the desk, and P turns it on");
 ok(/function pickTarget/.test(bridgeSrc), "look walks composedPath to the control, not a span inside it");
@@ -324,7 +325,7 @@ ok(/isPrimary: true/.test(wrapped), "punch says it is the primary pointer");
 ok(/inputType: "insertText"/.test(wrapped), "type fires InputEvent insertText");
 ok(/function onCleanup/.test(wrapped) && /__PA_CLEANUP/.test(wrapped), "onCleanup is there so a swap can drop listeners");
 ok(/function watch/.test(wrapped) && /function when/.test(wrapped), "watch and when sit next to it");
-ok(/function must/.test(wrapped) && /function ask/.test(wrapped), "must and ask are part of the agent");
+ok(/function glance/.test(wrapped) && /glance: glance/.test(wrapped), "glance is on the agent, for the tab a coding agent cannot see");
 ok(/function fromUs/.test(wrapped) && (wrapped.match(/fromUs\(ev\)/g) || []).length >= 2, "ask and capture ignore a message that did not come from this window");
 ok(/if \(running\) return/.test(wrapped), "watch does not re-enter when the callback touches the page");
 
@@ -395,6 +396,34 @@ const asked = runStackRich([{
   source: "agent.arm = function () { agent.ask('which boat', ['heron', 'mackerel']); };",
 }]);
 ok(asked.log.indexOf("ask:which boat") >= 0, "ask posts to the page");
+
+const seen = runStackRich([{
+  name: "see",
+  source: "agent.arm = function () { window.__shot = agent.glance(); };",
+}], {
+  document: {
+    title: "Receiving",
+    querySelectorAll(sel) {
+      if (sel === "h1, h2, h3") return [{ innerText: "Hold" }];
+      if (String(sel).indexOf("input") === 0) {
+        return [
+          { tagName: "INPUT", type: "password", id: "pw", getAttribute() { return "pw"; } },
+          { tagName: "INPUT", type: "text", id: "", getAttribute(n) { return n === "name" ? "vessel" : ""; } },
+        ];
+      }
+      if (String(sel).indexOf("button") === 0) return [{ innerText: "Save", tagName: "BUTTON", value: "" }];
+      if (sel === "table") return [];
+      return [];
+    },
+    querySelector() { return null; },
+  },
+});
+ok(seen.window.__shot && seen.window.__shot.title === "Receiving" && seen.window.__shot.headings[0] === "Hold",
+  "glance reads the title and the headings");
+ok(seen.window.__shot.fields.length === 1 && seen.window.__shot.fields[0].name === "vessel",
+  "glance keeps a field name and drops a password");
+ok(!JSON.stringify(seen.window.__shot).includes("pw"), "a password does not appear in the snapshot at all");
+ok(seen.window.__shot.buttons[0] === "Save" && seen.log.indexOf("glance") >= 0, "glance names the button and posts it");
 
 const watched = runStackRich([{
   name: "w",
@@ -510,6 +539,31 @@ try {
     "it keeps the last ten, newest first, and does not grow forever");
   const cleared = await desk("/api/oops", { method: "DELETE" });
   ok(cleared.status === 200 && (await (await desk("/api/oops")).json()).errors.length === 0, "and the desk can clear them");
+
+  const card = await (await desk("/api/contract")).json();
+  ok(card.read === "GET /api/glance" && /Playwright/.test(card.not), "the contract tells an agent when this is the tool, and when it is not");
+  const glanced = await desk("/api/glance", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "chrome-extension://pretendthisisreal" },
+    body: JSON.stringify({
+      url: "https://example.com/till",
+      title: "Receiving",
+      headings: ["Hold"],
+      fields: [{ tag: "input", type: "password", name: "pw" }, { tag: "input", type: "text", name: "vessel" }],
+      buttons: ["Save"],
+    }),
+  });
+  ok(glanced.status === 200, "the shell may post a glance");
+  const shot = (await (await desk("/api/glance")).json()).glance;
+  ok(shot.title === "Receiving" && shot.fields.length === 1 && shot.fields[0].name === "vessel" && !JSON.stringify(shot).includes("pw"),
+    "the desk keeps the names and drops the password");
+  const forgedGlance = await desk("/api/glance", {
+    method: "POST",
+    headers: { "Content-Type": "text/plain", Origin: "https://evil.example", "Sec-Fetch-Site": "cross-site" },
+    body: JSON.stringify({ title: "nope" }),
+  });
+  ok(forgedGlance.status === 403 && (await (await desk("/api/glance")).json()).glance.title === "Receiving",
+    "a site you visit may not overwrite what the tab showed");
 
   const asked = await desk("/api/ask", {
     method: "POST",

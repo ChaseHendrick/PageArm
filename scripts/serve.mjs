@@ -196,6 +196,31 @@ function loopbackHost(req) {
 // this is a workshop light, not a log file, and it should not outlive the desk.
 const MAX_OOPS = 10;
 let oopsLog = [];
+let glanceShot = null;
+
+function cleanGlance(raw) {
+  const g = raw && typeof raw === "object" ? raw : {};
+  const list = (arr, n, map) => (Array.isArray(arr) ? arr.slice(0, n) : []).map(map).filter(Boolean);
+  const rows = g.table && Array.isArray(g.table.rows)
+    ? g.table.rows.slice(0, 4).map((row) => (Array.isArray(row) ? row.slice(0, 6).map((c) => clamp(c, 40)) : [])).filter((row) => row.length)
+    : [];
+  return {
+    url: clamp(g.url, 300),
+    title: clamp(g.title, 120),
+    headings: list(g.headings, 8, (h) => clamp(h, 80)),
+    fields: list(g.fields, 12, (f) => {
+      if (!f || typeof f !== "object") return null;
+      const type = clamp(f.type, 20).toLowerCase();
+      if (type === "password" || type === "hidden" || type === "file") return null;
+      const name = clamp(f.name, 80);
+      if (!name) return null;
+      return { tag: clamp(f.tag, 20), type, name };
+    }),
+    buttons: list(g.buttons, 12, (b) => clamp(b, 60)),
+    table: rows.length ? { rows } : null,
+    at: Date.now(),
+  };
+}
 const MAX_MUST = 20;
 let mustLog = [];
 const MAX_ASK_ANSWERS = 10;
@@ -676,6 +701,52 @@ async function handle(req, res) {
     return;
   }
 
+  if (url.pathname === "/api/contract" && req.method === "GET") {
+    send(res, 200, JSON.stringify({
+      name: "pagearm",
+      use: "The human is already logged into the tab. Read it or act on it without a second browser and without attaching a debugger.",
+      not: "A clean browser for CI. Use Playwright for that.",
+      read: "GET /api/glance",
+      act: "POST /api/agent with { source }. The next navigation, or a click on P, runs it.",
+      sample: "agents/glance.js",
+    }), "application/json; charset=utf-8");
+    return;
+  }
+
+  if (url.pathname === "/api/glance") {
+    if (req.method === "GET") {
+      send(res, 200, JSON.stringify({ glance: glanceShot }), "application/json; charset=utf-8");
+      return;
+    }
+    if (req.method === "DELETE") {
+      if (!sameSite(req)) {
+        send(res, 403, "only the desk may clear that");
+        return;
+      }
+      glanceShot = null;
+      send(res, 200, JSON.stringify({ ok: true, glance: null }), "application/json; charset=utf-8");
+      return;
+    }
+    if (req.method !== "POST") {
+      send(res, 405, "not that way");
+      return;
+    }
+    if (!fromShell(req)) {
+      send(res, 403, "only the shell may report that");
+      return;
+    }
+    let told = {};
+    try {
+      told = JSON.parse((await readBody(req)) || "{}");
+    } catch (e) {
+      send(res, e && e.message === "too big" ? 413 : 400, e && e.message === "too big" ? "too big" : "bad json");
+      return;
+    }
+    glanceShot = cleanGlance(told);
+    send(res, 200, JSON.stringify({ ok: true }), "application/json; charset=utf-8");
+    return;
+  }
+
   if (url.pathname === "/api/oops") {
     if (req.method === "GET") {
       send(res, 200, JSON.stringify({ errors: oopsLog }), "application/json; charset=utf-8");
@@ -1096,6 +1167,7 @@ async function handle(req, res) {
 
   if (url.pathname === "/api/examples") {
     const names = [
+      "glance.js",
       "fill-sample.js",
       "copy-table.js",
       "dump-form.js",
