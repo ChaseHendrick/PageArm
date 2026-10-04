@@ -89,7 +89,7 @@ GET http://127.0.0.1:8787/api/contract
 GET http://127.0.0.1:8787/api/glance
 ```
 
-`agents/glance.js` is that script. `agent.glance()` posts the title, the headings, the field names, and the button labels. Not the values. Not passwords. If you need to act, you save an `agent.arm` and they click **P** again. If you need a clean browser with no session, use Playwright.
+`agents/glance.js` is that script. It reports from the top window only, so a frame cannot overwrite it with nothing. `agent.glance()` posts the title, the headings, the field names, and the button labels, and it looks inside an open shadow root. Not the values. Not passwords. If you need to act, you save an `agent.arm` and they click **P** again. If you need a clean browser with no session, use Playwright.
 
 ### Why include it in a project
 

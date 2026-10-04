@@ -227,7 +227,7 @@ ok(/quiet\(fetch\(ORIGIN \+ "\/api\/oops"/.test(shell), "and on to the desk, as 
 ok(/type === "ask"/.test(bridgeSrc) && /ask-result/.test(bridgeSrc), "the bridge carries ask the way it carries capture");
 ok(/ORIGIN \+ "\/api\/ask"/.test(shell), "ask polls the desk");
 ok(/type === "glance"/.test(shell) && /type === "glance"/.test(bridgeSrc), "a glance of the live tab travels to the desk");
-ok(/ORIGIN \+ "\/api\/glance"/.test(shell), "glance is posted as text, the same way oops is");
+ok(/frameId !== 0/.test(shell), "a child frame cannot overwrite the glance of the page you are looking at");
 ok(/look-on/.test(bridgeSrc) && /look-off/.test(bridgeSrc), "the bridge starts and stops look from a worker message");
 ok(/ORIGIN \+ "\/api\/look"/.test(shell) && /tabs\.sendMessage/.test(shell), "look records through the desk, and P turns it on");
 ok(/function pickTarget/.test(bridgeSrc), "look walks composedPath to the control, not a span inside it");
@@ -248,6 +248,7 @@ for (const n of readdirSync(join(root, "agents")).filter((f) => f.endsWith(".js"
   parses(wrapAgent(src), "wrapped " + n);
   parses(wrapPacked(src), "packed " + n);
 }
+ok(/window\.top === window/.test(readFileSync(join(root, "agents/glance.js"), "utf8")), "glance.js stays quiet in a frame");
 function runPacked(origin) {
   const win = { __PA_ORIGIN: "http://127.0.0.1:8787", origin, postMessage() {} };
   const ctx = createContext({ window: win, console, location: { hostname: "x", pathname: "/" }, setTimeout: () => 0 });
@@ -424,6 +425,36 @@ ok(seen.window.__shot.fields.length === 1 && seen.window.__shot.fields[0].name =
   "glance keeps a field name and drops a password");
 ok(!JSON.stringify(seen.window.__shot).includes("pw"), "a password does not appear in the snapshot at all");
 ok(seen.window.__shot.buttons[0] === "Save" && seen.log.indexOf("glance") >= 0, "glance names the button and posts it");
+
+const tillAmount = { tagName: "INPUT", type: "text", id: "", getAttribute(n) { return n === "name" ? "amount" : ""; } };
+const tillPay = { tagName: "BUTTON", type: "button", innerText: "Pay till", value: "", getAttribute() { return ""; } };
+const tillShadow = {
+  querySelectorAll(sel) {
+    const s = String(sel);
+    if (s.indexOf("input") === 0) return [tillAmount];
+    if (s.indexOf("button") === 0) return [tillPay];
+    if (s === "*") return [tillAmount, tillPay];
+    return [];
+  },
+};
+const tillHost = { tagName: "WHARF-TILL", shadowRoot: tillShadow };
+const shadowed = runStackRich([{
+  name: "shadow",
+  source: "agent.arm = function () { window.__shot = agent.glance(); };",
+}], {
+  document: {
+    title: "Wharf",
+    querySelectorAll(sel) {
+      const s = String(sel);
+      if (s === "*") return [tillHost];
+      if (s === "h1, h2, h3") return [{ innerText: "Till" }];
+      return [];
+    },
+    querySelector() { return null; },
+  },
+});
+ok(shadowed.window.__shot.fields.some((f) => f.name === "amount") && shadowed.window.__shot.buttons.indexOf("Pay till") >= 0,
+  "glance sees a field and a button inside an open shadow root");
 
 const watched = runStackRich([{
   name: "w",

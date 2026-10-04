@@ -221,6 +221,10 @@ api.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     return;
   }
   if (msg.type === "glance") {
+    // Child frames also run the agent. Their glance is usually empty, and it
+    // used to replace the page the human is actually looking at.
+    var frameId = sender && typeof sender.frameId === "number" ? sender.frameId : 0;
+    if (frameId !== 0) return;
     tellGlance(msg.glance && typeof msg.glance === "object" ? msg.glance : {});
     return;
   }

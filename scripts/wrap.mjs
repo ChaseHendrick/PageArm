@@ -242,17 +242,35 @@ const PREFIX = `(function () {
       try { t = String((el && (el.innerText || el.textContent)) || "").replace(/\s+/g, " ").trim(); } catch (eT) {}
       return t.slice(0, max || 80);
     }
-    function nodes(sel) {
-      try { return doc.querySelectorAll ? doc.querySelectorAll(sel) : []; } catch (eQ) { return []; }
+    function collect(sel) {
+      var out = [];
+      function walk(root) {
+        if (!root || !root.querySelectorAll) return;
+        var list = [];
+        try { list = root.querySelectorAll(sel); } catch (eQ) {}
+        for (var i = 0; i < list.length; i++) out.push(list[i]);
+        var all = [];
+        try { all = root.querySelectorAll("*"); } catch (eA) {}
+        for (var j = 0; j < all.length; j++) {
+          var node = all[j];
+          if (!node) continue;
+          if (node.shadowRoot) walk(node.shadowRoot);
+          if (node.tagName === "IFRAME") {
+            try { if (node.contentDocument) walk(node.contentDocument); } catch (eF) {}
+          }
+        }
+      }
+      walk(doc);
+      return out;
     }
     var headings = [];
-    var heads = nodes("h1, h2, h3");
+    var heads = collect("h1, h2, h3");
     for (var i = 0; i < heads.length && headings.length < 8; i++) {
       var h = textOf(heads[i], 80);
       if (h) headings.push(h);
     }
     var fields = [];
-    var inputs = nodes("input, textarea, select");
+    var inputs = collect("input, textarea, select");
     for (var f = 0; f < inputs.length && fields.length < 12; f++) {
       var el = inputs[f];
       var kind = "";
@@ -267,7 +285,7 @@ const PREFIX = `(function () {
       fields.push({ tag: String(el.tagName || "").toLowerCase(), type: kind.slice(0, 20), name: name });
     }
     var buttons = [];
-    var btns = nodes("button, [role=button], input[type=submit]");
+    var btns = collect("button, [role=button], input[type=submit]");
     for (var b = 0; b < btns.length && buttons.length < 12; b++) {
       var label = textOf(btns[b], 60);
       if (!label) {
@@ -276,7 +294,7 @@ const PREFIX = `(function () {
       if (label) buttons.push(label);
     }
     var table = null;
-    var tables = nodes("table");
+    var tables = collect("table");
     if (tables.length) {
       var rows = [];
       var trs = [];
