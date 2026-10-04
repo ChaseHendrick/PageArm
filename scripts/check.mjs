@@ -367,6 +367,43 @@ cleaned.agent.arm();
 ok(cleaned.log.filter((l) => l === "arm" || l === "clean").join(",") === "arm,clean,arm",
   "the next arm drops the last run's cleanup before it starts");
 
+{
+  const swapLog = [];
+  const swapWin = {
+    __PA_ORIGIN: "http://127.0.0.1:8787",
+    __log: swapLog,
+    postMessage(msg) {
+      if (msg && msg.type === "pip") swapLog.push("pip");
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const swapCtx = createContext({
+    Array, Object, String, Number, Boolean, Math, JSON, Error, Promise,
+    window: swapWin,
+    document: { querySelector() { return null; }, querySelectorAll() { return []; } },
+    console: { warn() {} },
+    location: { hostname: "example.com", pathname: "/", href: "https://example.com/" },
+    setTimeout: () => 0,
+  });
+  const first = "agent.arm = function () { agent.onCleanup(function () { window.__swapped = (window.__swapped || 0) + 1; }); };";
+  const second = "agent.arm = function () {};";
+  new Script(wrapAgent(first), { filename: "agent.js" }).runInContext(swapCtx);
+  new Script(wrapAgent(second), { filename: "agent.js" }).runInContext(swapCtx);
+  ok(swapWin.__swapped === 1, "a hot-swap runs the previous cleanup before the new agent arms");
+}
+
+{
+  const box = { tagName: "INPUT", type: "checkbox", checked: false, click() { this.checked = !this.checked; } };
+  const typed = runStackRich([{
+    name: "box",
+    source: "agent.arm = function () { agent.type(window.__box, 'true'); agent.type(window.__box, 'true'); };",
+  }]);
+  typed.window.__box = box;
+  typed.agent.arm();
+  ok(box.checked === true, "type checks a checkbox, and a second type does not undo it");
+}
+
 const pay = { id: "pay", hidden: false };
 const shadow = {
   querySelector(sel) { return sel === "#pay" ? pay : null; },

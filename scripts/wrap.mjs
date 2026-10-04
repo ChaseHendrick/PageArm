@@ -84,6 +84,13 @@ const PREFIX = `(function () {
   function type(el, text) {
     if (!el) return;
     try {
+      var inputType = String(el.type || "").toLowerCase();
+      if (inputType === "checkbox" || inputType === "radio") {
+        var on = text === true || text === "true" || text === "on" || text === "1" || text === 1;
+        if (!!el.checked !== on) punch(el);
+        return;
+      }
+      try { if (el.focus) el.focus(); } catch (eF) {}
       var tag = el.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
         // Go through the prototype setter so React and friends notice the change.
@@ -330,6 +337,9 @@ const PREFIX = `(function () {
   };
   window.__agent = agent;
   window.__pagearm = agent;
+  // The previous inject registered listeners on this page. Run those before
+  // this copy replaces the hook, or a hot-swap leaves them behind.
+  try { if (typeof window.__PA_CLEANUP === "function") window.__PA_CLEANUP(); } catch (ePrev) {}
   window.__PA_CLEANUP = runCleanups;
   var arms = [];
   agent.scripts = [];
